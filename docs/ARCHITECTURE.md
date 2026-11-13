@@ -9,14 +9,14 @@ Client (OpenVPN Connect / openvpn CLI)
 │ HAProxy (only when TCP + HAProxy enabled)                    │
 │  frontend ovpn_wizard_frontend_<port>  bind *:<port>         │
 │    ├─ TLS ClientHello + known SNI → optional VLESS/Reality   │
-│    └─ anything else               → 127.0.0.1:1194           │
+│    └─ anything else               → 127.0.0.1:<internal-port> │
 └──────────────────────────────────────────────────────────────┘
    │
    ▼
-OpenVPN (127.0.0.1:1194 when behind HAProxy, public port otherwise)
+OpenVPN (127.0.0.1:<detected internal port> when behind HAProxy, public port otherwise)
    │
    ├─ AEAD data channel (AES-256-GCM / CHACHA20-POLY1305)
-   ├─ TLS 1.2+ control channel with tls-crypt
+   ├─ TLS 1.3 control channel (1.2 optional) with tls-crypt
    ├─ unique ECDSA P-384 certificate per user + CRL
    └─ PAM password (optional second factor)
    │
@@ -30,11 +30,15 @@ tun0 → NAT/forwarding (free mode) or no forwarding (locked mode)
    block in `/etc/haproxy/haproxy.cfg`. It never replaces an entire config.
 2. **Validate before activating.** `haproxy -c` runs before reload; OpenVPN is
    restarted with a timestamped backup and rolled back on failure.
-3. **One identity per user.** Each profile has its own certificate and key.
+3. **Adapt to the existing server.** The live `server.conf` is parsed for port,
+   ciphers, TLS version, MTU, buffers, verification mode and certificate CN.
+   An existing HAProxy frontend on the port is reused when it already routes to
+   the VPN; otherwise one marked non-TLS route is inserted.
+4. **One identity per user.** Each profile has its own certificate and key.
    Revoking one does not affect anyone else.
-4. **No plaintext delivery.** Profiles move over SSH or a one-time token
+5. **No plaintext delivery.** Profiles move over SSH or a one-time token
    HTTPS server; never a web root.
-5. **Fail loudly and safely.** Conflicts and missing dependencies produce a
+6. **Fail loudly and safely.** Conflicts and missing dependencies produce a
    human-readable explanation and a fix command; nothing is deleted silently.
 
 ## Components

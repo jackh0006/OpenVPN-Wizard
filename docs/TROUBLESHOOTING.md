@@ -21,9 +21,12 @@ sudo ss -ltnp | grep ':443'
 
 Options:
 
-1. Choose another port: `sudo vpn-installer install --port 8443`.
-2. Free the port yourself (stop the unrelated service) and re-run.
-3. Use UDP, which does not use HAProxy: `--proto udp`.
+1. If an existing TCP frontend already owns the port, the installer can add a
+   marked non-TLS route and reuse it. Review the proposed change with
+   `sudo vpn-installer plan` first.
+2. Choose another port: `sudo vpn-installer install --port 8443`.
+3. Free the port yourself (stop the unrelated service) and re-run.
+4. Use UDP, which does not use HAProxy: `--proto udp`.
 
 The installer never kills another service.
 

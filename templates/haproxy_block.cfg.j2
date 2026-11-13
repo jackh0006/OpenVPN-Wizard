@@ -25,7 +25,7 @@ backend ovpn_wizard_openvpn
     tcp-check connect
     timeout connect 5s
     timeout server 1h
-    server openvpn 127.0.0.1:{{ config.internal_port }}
+    server openvpn 127.0.0.1:{{ config.haproxy_backend_port }}
 {% if config.enable_vless %}
 
 backend ovpn_wizard_vless_1

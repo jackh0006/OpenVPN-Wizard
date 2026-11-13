@@ -68,11 +68,12 @@ class InstallConfig:
     # ── Transport ────────────────────────────────────────────────────────
     vpn_proto: str = "tcp"             # "tcp" | "udp"
     public_port: int = 443             # Port clients connect to
-    internal_port: int = 1194          # Loopback port when HAProxy fronts us
+    internal_port: int = 0            # 0 = auto-detect existing, else 1194
 
     # ── Security policy ──────────────────────────────────────────────────
     auth_mode: str = "userpass"        # "userpass" | "cert"
     access_mode: str = "free"          # "free" | "locked"
+    ipv6_enabled: bool = False         # False = disable host IPv6 + block clients
 
     # ── Profiles ─────────────────────────────────────────────────────────
     profile_prefix: str = "MHH06"
@@ -94,6 +95,27 @@ class InstallConfig:
     dns2: str = DEFAULT_DNS2
     max_clients: int = 128
     dh: str = "none"                    # "none" for ECDSA, path for RSA legacy PKI
+    server_cert_cn: str = "server"      # detected from an existing certificate
+
+    # ── Crypto / transport tuning (defaults match the working reference VPS) ──
+    cipher: str = "AES-256-GCM"
+    data_ciphers: str = "AES-256-GCM:CHACHA20-POLY1305:AES-128-GCM"
+    auth_digest: str = "SHA384"         # SHA384 matches the reference profiles
+    tls_min: str = "1.3"
+    tls_max: str = "1.3"
+    tls_ciphersuites: str = "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
+    tls_cipher: str = (
+        "TLS-ECDHE-ECDSA-WITH-AES-256-GCM-SHA384:"
+        "TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384:"
+        "TLS-ECDHE-ECDSA-WITH-CHACHA20-POLY1305-SHA256:"
+        "TLS-ECDHE-RSA-WITH-CHACHA20-POLY1305-SHA256"
+    )
+    tun_mtu: int = 1400
+    mssfix: int = 1360
+    sndbuf: int = 524288
+    rcvbuf: int = 524288
+    verify_client_cert: str = "require" # require | optional | none
+    duplicate_cn: bool = False
 
     # ── Runtime / paths ──────────────────────────────────────────────────
     openvpn_dir: str = "/etc/openvpn"
@@ -113,6 +135,7 @@ class InstallConfig:
 
     # ── Behaviour ────────────────────────────────────────────────────────
     manage_haproxy: bool = True
+    detect_existing: bool = True
     wan_interface: str = ""
     server_ip_confirmed: bool = False
     non_interactive: bool = False
@@ -124,6 +147,9 @@ class InstallConfig:
         self.domain = (self.domain or "").strip().lower().rstrip(".")
         self.endpoint_host = (self.endpoint_host or "").strip().lower().rstrip(".")
         self.vpn_proto = (self.vpn_proto or "tcp").strip().lower()
+        self.auth_digest = (self.auth_digest or "SHA384").strip().upper()
+        self.tls_min = str(self.tls_min or "1.3").strip()
+        self.tls_max = str(self.tls_max or "").strip()
         self.auth_mode = (self.auth_mode or "userpass").strip().lower()
         self.access_mode = (self.access_mode or "free").strip().lower()
         self.profile_prefix = (self.profile_prefix or "MHH06").strip()
@@ -169,7 +195,13 @@ class InstallConfig:
 
     @property
     def openvpn_listen_port(self) -> int:
-        return self.internal_port if self.behind_haproxy else self.public_port
+        if not self.behind_haproxy:
+            return self.public_port
+        return self.internal_port or 1194
+
+    @property
+    def haproxy_backend_port(self) -> int:
+        return self.openvpn_listen_port
 
     @property
     def vpn_network(self) -> str:
@@ -335,16 +367,35 @@ def validate_config(config: InstallConfig) -> List[str]:
         problems.append("The IP endpoint must be a valid IPv4 address.")
     if not validate_port(config.public_port):
         problems.append("The public port must be between 1 and 65535.")
+    if config.internal_port and not validate_port(config.internal_port):
+        problems.append("The internal loopback port must be between 1 and 65535.")
     if not validate_transport(config.vpn_proto):
         problems.append("Transport must be 'tcp' or 'udp'.")
     if not validate_auth_mode(config.auth_mode):
         problems.append("Authentication mode must be 'userpass' or 'cert'.")
     if not validate_access_mode(config.access_mode):
         problems.append("Access mode must be 'free' or 'locked'.")
-    if not config.users:
+    if config.auth_mode == "cert" and config.verify_client_cert != "require":
+        problems.append("Certificate-only mode requires verify-client-cert=require.")
+    if config.tls_min not in {"1.2", "1.3"} or config.tls_max not in {"1.2", "1.3"}:
+        problems.append("TLS versions must be 1.2 or 1.3.")
+    elif config.tls_max < config.tls_min:
+        problems.append("tls_max must be greater than or equal to tls_min.")
+    if config.auth_digest.upper() not in {"SHA256", "SHA384", "SHA512"}:
+        problems.append("auth_digest must be SHA256, SHA384 or SHA512.")
+    if not (576 <= config.tun_mtu <= 1500):
+        problems.append("tun_mtu must be between 576 and 1500.")
+    if not (500 <= config.mssfix <= 1460):
+        problems.append("mssfix must be between 500 and 1460.")
+    if config.sndbuf < 0 or config.rcvbuf < 0:
+        problems.append("Socket buffers cannot be negative.")
+    if config.verify_client_cert not in {"require", "optional", "none"}:
+        problems.append("verify_client_cert must be require, optional or none.")
+    if config.users and not config.users[0].name:
         problems.append("At least one client profile is required.")
     seen_names: set[str] = set()
     seen_users: set[str] = set()
+    seen_certs: set[str] = set()
     for user in config.users:
         if not validate_profile_name(user.name):
             problems.append(f"Invalid profile name: {user.name!r}.")
@@ -357,6 +408,13 @@ def validate_config(config: InstallConfig) -> List[str]:
         if user.username in seen_users:
             problems.append(f"Duplicate username: {user.username!r}.")
         seen_users.add(user.username)
+        cert_name = user.safe_cert_name
+        if cert_name in seen_certs:
+            problems.append(
+                f"Two users would share the same certificate name: {cert_name!r}. "
+                "Give each profile a different username."
+            )
+        seen_certs.add(cert_name)
         if config.auth_mode == "userpass":
             ok, reason = validate_password(user.password)
             if not ok:

@@ -34,6 +34,9 @@ done
 
 run "OpenVPN service active" systemctl is-active --quiet openvpn@server
 run "No compression in server config" bash -c "! grep -Eq '^(comp-lzo|compress)' /etc/openvpn/server.conf"
+run "MTU 1400 configured" grep -q '^tun-mtu 1400' /etc/openvpn/server.conf
+run "MSS 1360 configured" grep -q '^mssfix 1360' /etc/openvpn/server.conf
+run "512K socket buffers configured" bash -c "grep -q '^sndbuf 524288' /etc/openvpn/server.conf && grep -q '^rcvbuf 524288' /etc/openvpn/server.conf"
 run "No plaintext web profile directory" test ! -d /var/www/vpn-profiles
 
 if grep -q '^plugin .*openvpn-plugin-auth-pam.so' /etc/openvpn/server.conf; then

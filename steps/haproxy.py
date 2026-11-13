@@ -41,13 +41,16 @@ class HAProxyStep(BaseStep):
         log(f"Checking HAProxy config at {config.haproxy_cfg}...")
         manager = HAProxyManager(config)
         result = manager.apply()
+        if result.reused_existing:
+            log("Existing HAProxy frontend already routes non-TLS traffic to OpenVPN; no changes")
+            return True
         if not result.changed:
             log("HAProxy configuration already contains the correct VPN block")
             return True
         if result.migrated_v1:
             log("Migrated the old v1 HAProxy layout (backup kept)")
-        log(f"Managed block {'added' if result.block_created else 'updated'}; "
-            f"backup: {result.backup or 'none'}")
+        action = "inserted an additive route and backend" if result.inserted_route else "added the managed block"
+        log(f"HAProxy: {action}; backup: {result.backup or 'none'}")
         log("  ✓ HAProxy reloaded; all pre-existing sections were preserved")
         return True
 

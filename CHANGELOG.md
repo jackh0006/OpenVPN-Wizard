@@ -2,6 +2,55 @@
 
 All notable changes to this project are documented here.
 
+## [2.1.0] - 2026-11-13
+
+### Added
+- Live-setup detection: an existing `/etc/openvpn/server.conf` is read and its
+  port, ciphers, TLS version, auth digest, MTU/MSS, socket buffers,
+  verification mode, duplicate-CN policy and certificate CN are preserved.
+- Smart HAProxy integration for a multi-service frontend: when an existing TCP
+  frontend already binds the chosen port, the installer reuses a compatible
+  VPN backend, or inserts one marked non-TLS `use_backend` rule and backend.
+  It no longer needs to refuse just because port 443 is already used by a
+  frontend that can be extended safely.
+- IPv6 choice: disable it (default, matching the reference VPS) or keep it
+  enabled with `--enable-ipv6`.
+- Advanced tuning flags: `--tun-mtu`, `--mssfix`, `--sndbuf`, `--rcvbuf`,
+  `--auth-digest`, `--tls-min`, `--tls-max`, `--internal-port`,
+  `--verify-client-cert`, `--duplicate-cn`, `--no-detect`.
+- Standard community files: governance, roadmap, authors, donations,
+  pre-commit, Makefile, dev requirements, CodeQL and dependency review.
+- Crypto donation addresses from the author's other repositories
+  (`DONATIONS.md` and `.github/FUNDING.yml`).
+
+### Changed
+- Defaults now match the tested reference VPS: TLS 1.3, auth SHA384, MTU 1400,
+  MSS 1360, send/receive buffers 524288, `tls-crypt`, `register-dns`.
+- Existing PKI discovery now also checks `/root/easy-rsa/pki` and adopts an
+  existing `ta.key` so old profiles keep working.
+- Existing server certificate CNs (including `CN=ChangeMe`) are preserved and
+  used in new profiles instead of forcing `CN=server`.
+- HAProxy route insertion uses graceful reload where possible; services that
+  are already active are not needlessly restarted.
+- `PKIStep` always re-checks the existing PKI so RSA vs ECDSA and DH settings
+  are correct on every run.
+
+### Security
+- IPv6 is disabled only as an explicit choice; enabling it is supported.
+- Certificate-only mode still forces `verify-client-cert require`.
+- No existing HAProxy section, route, certificate or unrelated firewall rule is
+  deleted or rewritten.
+
+### Fixed
+- Easy-RSA no longer receives a conflicting global `EASYRSA_REQ_CN` for client
+  or server certificate issuance (verified against Easy-RSA 3.1.7).
+- A real CRL is generated instead of accepting an empty placeholder.
+- The `tls-cipher` list stays under OpenVPN's 256-character option limit.
+- OpenVPN is validated against the exact live `server.conf` shape (port 11944,
+  RSA CN=ChangeMe, `verify-client-cert none`, `duplicate-cn`).
+
+[2.1.0]: https://github.com/jackh0006/OpenVPN-Wizard/compare/v2.0.0...v2.1.0
+
 ## [2.0.0] - 2026-11-13
 
 ### Added

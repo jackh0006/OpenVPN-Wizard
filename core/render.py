@@ -120,7 +120,7 @@ def validate_rendered_server(conf: str, config: InstallConfig, log=None) -> list
         "topology subnet",
         "tls-crypt",
         "remote-cert-tls client",
-        "verify-client-cert require",
+        f"verify-client-cert {config.verify_client_cert}",
         "server ",
     ]
     for needle in required:
@@ -130,8 +130,12 @@ def validate_rendered_server(conf: str, config: InstallConfig, log=None) -> list
         problems.append("missing PAM plugin for user/password authentication")
     if config.auth_mode == "cert" and "openvpn-plugin-auth-pam.so" in conf:
         problems.append("PAM plugin must not be enabled in certificate-only mode")
-    if "comp-lzo" in conf or "compress " in conf:
+    if "comp-lzo" in conf or "\ncompress " in conf:
         problems.append("compression must not be enabled")
+    for setting in ("tun-mtu", "mssfix", "sndbuf", "rcvbuf", "auth",
+                    "cipher", "data-ciphers", "tls-version-min"):
+        if f"\n{setting} " not in "\n" + conf:
+            problems.append(f"missing tuning directive: {setting}")
     if config.free_tunnel and 'push "redirect-gateway' not in conf:
         problems.append("free tunnel is missing redirect-gateway")
     if not config.free_tunnel and 'push "redirect-gateway' in conf:

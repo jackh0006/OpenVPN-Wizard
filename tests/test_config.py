@@ -100,3 +100,11 @@ def test_locked_and_cert_only_are_valid():
     config = _config(auth_mode="cert", access_mode="locked",
                      users=[ClientSpec("A", "a", "")])
     assert validate_config(config) == []
+
+
+def test_users_cannot_share_certificate_names():
+    config = _config(users=[
+        ClientSpec("A", "a", "Correct-Horse-Battery-9", cert_name="same"),
+        ClientSpec("B", "b", "Correct-Horse-Battery-9", cert_name="same"),
+    ])
+    assert any("same certificate name" in p for p in validate_config(config))

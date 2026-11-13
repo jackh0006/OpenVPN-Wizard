@@ -141,9 +141,9 @@ def _check_config(config: InstallConfig) -> List[Result]:
                 "nothing is listening",
                 f"ss -ltnp | grep :{config.public_port}",
             ))
-        if not _tcp(config.internal_port, "127.0.0.1"):
+        if not _tcp(config.haproxy_backend_port, "127.0.0.1"):
             results.append(Result(
-                f"OpenVPN loopback TCP/{config.internal_port}", False,
+                f"OpenVPN loopback TCP/{config.haproxy_backend_port}", False,
                 "nothing is listening",
                 "Check the OpenVPN journal and the managed HAProxy block.",
             ))
@@ -218,6 +218,16 @@ def _check_config(config: InstallConfig) -> List[Result]:
                 f"Profile: {user.name}", False, "missing",
                 "sudo vpn-installer manage -> export profile",
             ))
+
+    ipv6 = Path("/proc/sys/net/ipv6/conf/all/disable_ipv6")
+    if ipv6.exists():
+        value = ipv6.read_text().strip()
+        expected = "0" if config.ipv6_enabled else "1"
+        results.append(Result(
+            "IPv6 policy", value == expected,
+            f"disable_ipv6={value} (expected {expected})",
+            "Re-run the installer (firewall step) or change --enable-ipv6.",
+        ))
 
     if config.free_tunnel:
         forward = Path("/proc/sys/net/ipv4/ip_forward").read_text().strip()

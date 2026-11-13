@@ -22,7 +22,7 @@ git checkout -b feature/your-feature-name
 - Follow the code style guidelines below
 - Add tests for new functionality
 - Update documentation if user-facing
-- Run the validation checklist after changes
+- Run `make test` and `make lint` before opening the PR
 
 ### 5. Commit Your Changes
 ```bash
@@ -49,8 +49,8 @@ Then open a Pull Request on GitHub.
 ## Code Style
 
 ### Python
-- Python 3.11+
-- Type hints on all functions
+- Python 3.10+
+- Type hints on public functions
 - Black formatting (100 char line length)
 - Ruff for linting
 - MyPy for type checking

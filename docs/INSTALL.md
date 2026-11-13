@@ -52,10 +52,21 @@ without changing the system. Inspect them, then run the real installer.
 4. **TCP or UDP** — TCP can share 443 via HAProxy; UDP binds directly.
 5. **Authentication** — certificate + password, or certificate only.
 6. **Access** — free (full tunnel) or locked (VPN network only).
-7. **Profile prefix** — used in `.ovpn` file names.
-8. **How many profiles** — 1 to 50, each with a unique key.
-9. **HAProxy** — attach the VPN to the existing config (TCP only).
-10. **VLESS** — optional advanced multiplexing on the same 443 listener.
+7. **IPv6** — disable it (default, prevents leaks) or keep it enabled.
+8. **Profile prefix** — used in `.ovpn` file names.
+9. **How many profiles** — 1 to 50, each with a unique key.
+10. **HAProxy** — attach the VPN to the existing config (TCP only).
+11. **VLESS** — optional advanced multiplexing on the same 443 listener.
+
+If an existing `/etc/openvpn/server.conf` is found, its port, ciphers, TLS
+version, auth digest, MTU, MSS, buffers, verification mode and certificate CN
+are reused automatically. Use `--no-detect` to ignore it.
+
+Advanced tuning:
+
+```bash
+--tun-mtu 1400 --mssfix 1360 --sndbuf 524288 --rcvbuf 524288 --auth-digest SHA384 --tls-min 1.3 --tls-max 1.3 --internal-port 0 --verify-client-cert require --duplicate-cn
+```
 
 ## Ports
 

@@ -1,9 +1,8 @@
-# OpenVPN Wizard v2 - server configuration
+# OpenVPN Wizard v2.1 - server configuration
 # Generated: {{ generated_at }}
 # Transport: {{ config.vpn_proto }} | Auth: {{ config.auth_mode }} | Access: {{ config.access_mode }}
 #
-# This file is managed by OpenVPN Wizard. A timestamped backup is created
-# before every change.
+# Managed by OpenVPN Wizard. A timestamped backup is created before every change.
 
 port {{ config.openvpn_listen_port }}
 proto {{ "tcp-server" if config.vpn_proto == "tcp" else "udp4" }}
@@ -20,15 +19,15 @@ persist-tun
 keepalive 10 60
 max-clients {{ config.max_clients }}
 
-# ── Cryptography ────────────────────────────────────────────────────────
-# AEAD data channel; no compression (compression is a known oracle risk).
-data-ciphers AES-256-GCM:CHACHA20-POLY1305:AES-128-GCM
-data-ciphers-fallback AES-256-GCM
-auth SHA256
-cipher AES-256-GCM
-tls-version-min 1.2
-tls-ciphersuites TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256
-tls-cipher TLS-ECDHE-ECDSA-WITH-AES-256-GCM-SHA384:TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384:TLS-ECDHE-ECDSA-WITH-CHACHA20-POLY1305-SHA256:TLS-ECDHE-RSA-WITH-CHACHA20-POLY1305-SHA256
+# ── Cryptography (defaults match the working reference VPS) ──────────────
+cipher {{ config.cipher }}
+data-ciphers {{ config.data_ciphers }}
+data-ciphers-fallback {{ config.cipher }}
+auth {{ config.auth_digest }}
+tls-version-min {{ config.tls_min }}
+{% if config.tls_max %}tls-version-max {{ config.tls_max }}
+{% endif %}tls-ciphersuites {{ config.tls_ciphersuites }}
+tls-cipher {{ config.tls_cipher }}
 tls-crypt {{ config.openvpn_dir }}/ta.key
 ca {{ config.openvpn_dir }}/ca.crt
 cert {{ config.openvpn_dir }}/server.crt
@@ -40,40 +39,42 @@ remote-cert-tls client
 # Certificate + PAM password: two independent factors.
 plugin {{ pam_plugin }} login
 username-as-common-name
-verify-client-cert require
-{% else %}
-# Certificate-only: possession of the unique client key is the credential.
-verify-client-cert require
+{% endif %}
+verify-client-cert {{ config.verify_client_cert }}
+{% if config.duplicate_cn %}
+duplicate-cn
 {% endif %}
 
-# ── Routing policy ──────────────────────────────────────────────────────
+# ── Routing policy ───────────────────────────────────────────────────────
 {% if config.access_mode == "free" %}
 # Full tunnel: client internet traffic exits through this VPS.
 push "redirect-gateway def1 bypass-dhcp"
 push "dhcp-option DNS {{ config.dns1 }}"
 push "dhcp-option DNS {{ config.dns2 }}"
 push "block-outside-dns"
-push "block-ipv6"
+push "register-dns"
 {% else %}
 # Locked: clients can only reach the VPN subnet, never the public internet.
-# No redirect-gateway and no DNS push.
 push "route {{ config.vpn_subnet }} {{ config.vpn_netmask }}"
 {% endif %}
-
-{% if config.access_mode == "free" %}
-# IPv6 is intentionally NOT disabled on the host (that would break unrelated
-# services). Clients are told to block IPv6 to prevent leaks.
+{% if not config.ipv6_enabled %}
+push "block-ipv6"
 {% endif %}
-reneg-sec 3600
 
+# ── MTU / buffers (same tested values as the reference VPS) ──────────────
+tun-mtu {{ config.tun_mtu }}
+mssfix {{ config.mssfix }}
+sndbuf {{ config.sndbuf }}
+rcvbuf {{ config.rcvbuf }}
+push "tun-mtu {{ config.tun_mtu }}"
+push "mssfix {{ config.mssfix }}"
+push "sndbuf {{ config.sndbuf }}"
+push "rcvbuf {{ config.rcvbuf }}"
 {% if config.vpn_proto == "tcp" %}
 tcp-nodelay
-mssfix 1360
-{% else %}
-mssfix 1420
 {% endif %}
-sndbuf 0
-rcvbuf 0
+reneg-sec 3600
+allow-compression no
 
 log-append /var/log/openvpn/server.log
 status /var/log/openvpn/status.log 30

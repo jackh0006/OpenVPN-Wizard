@@ -113,6 +113,14 @@ class ParameterScreen:
         access_mode = "free" if access_choice == "1" else "locked"
 
         self.console.print()
+        self.console.print("[primary]IPv6[/primary]")
+        self.console.print("  [primary]1.[/primary] Disable IPv6 (recommended; matches the reference VPS, prevents leaks)")
+        self.console.print("  [primary]2.[/primary] Keep IPv6 enabled on the host (no IPv6 tunnel is provided)")
+        ipv6_choice = Prompt.ask("Choice", choices=["1", "2"], default="1",
+                                 console=self.console)
+        ipv6_enabled = ipv6_choice == "2"
+
+        self.console.print()
         prefix = self._ask(
             "Profile name prefix (used for the .ovpn file names)",
             default="MHH06",
@@ -175,6 +183,7 @@ class ParameterScreen:
             reality_domain=reality_domain,
             admin_user=admin_user,
             admin_pass=admin_pass,
+            ipv6_enabled=ipv6_enabled,
             server_ip_confirmed=True,
         )
 
@@ -293,6 +302,10 @@ class ParameterScreen:
         table.add_row("Authentication", "certificate + password" if config.auth_mode == "userpass"
                       else "certificate only")
         table.add_row("Access", "free (full tunnel)" if config.free_tunnel else "locked (VPN network only)")
+        table.add_row("IPv6", "enabled on host (not tunneled)" if config.ipv6_enabled else "disabled + blocked on clients")
+        table.add_row("MTU / MSS", f"{config.tun_mtu} / {config.mssfix}")
+        table.add_row("Buffers", f"send {config.sndbuf} / receive {config.rcvbuf}")
+        table.add_row("TLS / auth", f"TLS {config.tls_min}-{config.tls_max} / {config.auth_digest}")
         table.add_row("HAProxy", "yes (managed block)" if config.use_haproxy else "no (direct bind)")
         table.add_row("VLESS multiplex", "yes" if config.enable_vless else "no")
         self.console.print(Panel(table, border_style="primary"))

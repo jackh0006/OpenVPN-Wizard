@@ -28,6 +28,7 @@ from core.config import (
     sanitize_profile_name,
     validate_config,
 )
+from core.detect import apply_existing_setup
 from core.exceptions import InstallerError, format_error
 from core.logger import get_log_path, setup_logger
 from core.plan import build_plan
@@ -56,7 +57,7 @@ from ui.screens.welcome import WelcomeScreen
 from utils.download import serve_once
 from validation.checklist import run_validation
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 app = typer.Typer(
     name="vpn-installer",
@@ -157,6 +158,18 @@ def _config_from_options(
     reality_domain: str = "",
     admin_user: str = "admin",
     admin_pass: str = "",
+    detect_existing: bool = True,
+    ipv6_enabled: bool = False,
+    tun_mtu: int = 1400,
+    mssfix: int = 1360,
+    sndbuf: int = 524288,
+    rcvbuf: int = 524288,
+    auth_digest: str = "SHA384",
+    tls_min: str = "1.3",
+    tls_max: str = "1.3",
+    internal_port: int = 0,
+    verify_client_cert: str = "require",
+    duplicate_cn: bool = False,
 ) -> InstallConfig:
     from utils.system import get_public_ip
     server_ip = (server_ip or get_public_ip() or "").strip()
@@ -206,7 +219,21 @@ def _config_from_options(
         admin_pass=admin_pass or (generate_password() if enable_vless else ""),
         server_ip_confirmed=True,
         non_interactive=True,
+        detect_existing=detect_existing,
+        ipv6_enabled=ipv6_enabled,
+        tun_mtu=tun_mtu,
+        mssfix=mssfix,
+        sndbuf=sndbuf,
+        rcvbuf=rcvbuf,
+        auth_digest=auth_digest,
+        tls_min=tls_min,
+        tls_max=tls_max,
+        internal_port=internal_port,
+        verify_client_cert=verify_client_cert,
+        duplicate_cn=duplicate_cn,
     )
+    if detect_existing:
+        apply_existing_setup(config)
     problems = validate_config(config)
     if problems:
         raise typer.BadParameter(
@@ -275,6 +302,7 @@ class Installer:
         result = await ParameterScreen(self.console).run()
         if not result:
             return False
+        apply_existing_setup(result)
         self.config = result
         self.steps = self.build_steps(result)
         self.state = InstallState(config=result)
@@ -433,6 +461,18 @@ def install(
     reality_domain: str = typer.Option("", "--reality-domain"),
     admin_user: str = typer.Option("admin", "--admin-user"),
     admin_pass: str = typer.Option("", "--admin-pass"),
+    no_detect: bool = typer.Option(False, "--no-detect", help="Ignore an existing OpenVPN config."),
+    enable_ipv6: bool = typer.Option(False, "--enable-ipv6", help="Keep host IPv6 enabled (default: disabled)."),
+    tun_mtu: int = typer.Option(1400, "--tun-mtu"),
+    mssfix: int = typer.Option(1360, "--mssfix"),
+    sndbuf: int = typer.Option(524288, "--sndbuf"),
+    rcvbuf: int = typer.Option(524288, "--rcvbuf"),
+    auth_digest: str = typer.Option("SHA384", "--auth-digest"),
+    tls_min: str = typer.Option("1.3", "--tls-min"),
+    tls_max: str = typer.Option("1.3", "--tls-max"),
+    internal_port: int = typer.Option(0, "--internal-port", help="Loopback port; 0 = auto-detect."),
+    verify_client_cert: str = typer.Option("require", "--verify-client-cert"),
+    duplicate_cn: bool = typer.Option(False, "--duplicate-cn"),
 ):
     """Run the installer (interactive by default)."""
     if dry_run:
@@ -444,6 +484,11 @@ def install(
                 no_haproxy=no_haproxy, enable_vless=enable_vless,
                 domain1=domain1, domain2=domain2, reality_domain=reality_domain,
                 admin_user=admin_user, admin_pass=admin_pass,
+                detect_existing=not no_detect, ipv6_enabled=enable_ipv6,
+                tun_mtu=tun_mtu, mssfix=mssfix, sndbuf=sndbuf, rcvbuf=rcvbuf,
+                auth_digest=auth_digest, tls_min=tls_min, tls_max=tls_max,
+                internal_port=internal_port, verify_client_cert=verify_client_cert,
+                duplicate_cn=duplicate_cn,
             )
             result = build_plan(config, output)
             console.print(Panel(
@@ -478,6 +523,11 @@ def install(
             no_haproxy=no_haproxy, enable_vless=enable_vless,
             domain1=domain1, domain2=domain2, reality_domain=reality_domain,
             admin_user=admin_user, admin_pass=admin_pass,
+            detect_existing=not no_detect, ipv6_enabled=enable_ipv6,
+            tun_mtu=tun_mtu, mssfix=mssfix, sndbuf=sndbuf, rcvbuf=rcvbuf,
+            auth_digest=auth_digest, tls_min=tls_min, tls_max=tls_max,
+            internal_port=internal_port, verify_client_cert=verify_client_cert,
+            duplicate_cn=duplicate_cn,
         )
     _guard(Installer().run_full(
         non_interactive=non_interactive or bool(config), skip_validation=skip_validation,
@@ -503,6 +553,18 @@ def plan(
     domain1: str = typer.Option("", "--domain1"),
     domain2: str = typer.Option("", "--domain2"),
     reality_domain: str = typer.Option("", "--reality-domain"),
+    no_detect: bool = typer.Option(False, "--no-detect"),
+    enable_ipv6: bool = typer.Option(False, "--enable-ipv6"),
+    tun_mtu: int = typer.Option(1400, "--tun-mtu"),
+    mssfix: int = typer.Option(1360, "--mssfix"),
+    sndbuf: int = typer.Option(524288, "--sndbuf"),
+    rcvbuf: int = typer.Option(524288, "--rcvbuf"),
+    auth_digest: str = typer.Option("SHA384", "--auth-digest"),
+    tls_min: str = typer.Option("1.3", "--tls-min"),
+    tls_max: str = typer.Option("1.3", "--tls-max"),
+    internal_port: int = typer.Option(0, "--internal-port"),
+    verify_client_cert: str = typer.Option("require", "--verify-client-cert"),
+    duplicate_cn: bool = typer.Option(False, "--duplicate-cn"),
 ):
     """Render everything to a directory without changing the system (safe test)."""
     config = _config_from_options(
@@ -510,7 +572,11 @@ def plan(
         auth_mode=auth_mode, access_mode=access_mode, prefix=prefix,
         profiles=profiles, users_raw=users, no_haproxy=no_haproxy,
         enable_vless=enable_vless, domain1=domain1, domain2=domain2,
-        reality_domain=reality_domain,
+        reality_domain=reality_domain, detect_existing=not no_detect,
+        ipv6_enabled=enable_ipv6, tun_mtu=tun_mtu, mssfix=mssfix,
+        sndbuf=sndbuf, rcvbuf=rcvbuf, auth_digest=auth_digest,
+        tls_min=tls_min, tls_max=tls_max, internal_port=internal_port,
+        verify_client_cert=verify_client_cert, duplicate_cn=duplicate_cn,
     )
     try:
         result = build_plan(config, output_dir)
@@ -524,8 +590,11 @@ def plan(
     table.add_row("Server config", result["server_conf"])
     for profile in result["profiles"]:
         table.add_row("Client profile", profile)
-    if result["haproxy_block"]:
+    strategy = result.get("haproxy_strategy") or {}
+    if result["haproxy_block"] and strategy.get("action") in {"append", "insert"}:
         table.add_row("HAProxy block", result["haproxy_block"])
+    if strategy:
+        table.add_row("HAProxy action", f"{strategy.get('action')}: {strategy.get('reason')}")
     console.print(Panel(table, title="[primary]Dry-run plan[/primary]",
                         border_style="primary"))
     if result["problems"]:

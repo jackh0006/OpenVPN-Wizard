@@ -35,8 +35,10 @@ def run_validation(config: InstallConfig) -> List[Tuple[str, bool, str]]:
         (f"OpenVPN service ({OpenVPNStep.openvpn_service_name()})", _service_active, {}),
         ("OpenVPN server config exists", _server_conf_exists, {}),
         ("OpenVPN config uses TLS-crypt + AEAD", _server_crypto, {}),
+        ("MTU, MSS and buffers are configured", _server_tuning, {}),
         ("CRL is valid", _crl_valid, {}),
         ("IPv4 forwarding", _ip_forward, {}),
+        ("IPv6 policy", _ipv6_policy, {}),
         ("Client profiles exist and validate", _profiles_valid, {}),
         ("Profile permissions are 600", _profile_perms, {}),
         ("Certificate/key pairs match", _key_pairs, {}),
@@ -47,7 +49,7 @@ def run_validation(config: InstallConfig) -> List[Tuple[str, bool, str]]:
             ("HAProxy service active", _haproxy_active, {}),
             ("HAProxy config syntax", _haproxy_syntax, {}),
             (f"Public TCP/{config.public_port} listening", _public_tcp, {}),
-            (f"OpenVPN loopback TCP/{config.internal_port}", _loopback_tcp, {}),
+            (f"OpenVPN loopback TCP/{config.haproxy_backend_port}", _loopback_tcp, {}),
         ]
     else:
         if config.vpn_proto == "udp":
@@ -92,6 +94,22 @@ def _server_crypto(config, **_) -> Tuple[bool, str]:
     return not missing, "ok" if not missing else f"missing: {', '.join(missing)}"
 
 
+def _server_tuning(config, **_) -> Tuple[bool, str]:
+    path = Path(config.openvpn_dir) / "server.conf"
+    if not path.exists():
+        return False, "server.conf missing"
+    text = path.read_text(errors="ignore")
+    required = {
+        "tun-mtu": str(config.tun_mtu),
+        "mssfix": str(config.mssfix),
+        "sndbuf": str(config.sndbuf),
+        "rcvbuf": str(config.rcvbuf),
+    }
+    missing = [key for key, value in required.items()
+               if f"{key} {value}" not in text]
+    return not missing, "ok" if not missing else "missing: " + ", ".join(missing)
+
+
 def _crl_valid(config, **_) -> Tuple[bool, str]:
     for path in (Path(config.pki_dir) / "crl.pem", Path(config.openvpn_dir) / "crl.pem"):
         if path.exists() and "BEGIN X509 CRL" in path.read_text(errors="ignore"):
@@ -104,6 +122,16 @@ def _ip_forward(config, **_) -> Tuple[bool, str]:
         return True, "not required in locked mode"
     value = Path("/proc/sys/net/ipv4/ip_forward").read_text().strip()
     return value == "1", f"ip_forward={value}"
+
+
+def _ipv6_policy(config, **_) -> Tuple[bool, str]:
+    path = Path("/proc/sys/net/ipv6/conf/all/disable_ipv6")
+    if not path.exists():
+        return True, "IPv6 not present in this kernel"
+    value = path.read_text().strip()
+    if config.ipv6_enabled:
+        return value == "0", f"host IPv6 disabled={value} (expected 0)"
+    return value == "1", f"host IPv6 disabled={value} (expected 1)"
 
 
 def _profiles_valid(config, **_) -> Tuple[bool, str]:
@@ -164,8 +192,8 @@ def _public_tcp(config, **_) -> Tuple[bool, str]:
 
 
 def _loopback_tcp(config, **_) -> Tuple[bool, str]:
-    ok = _tcp(config.internal_port, "127.0.0.1")
-    return ok, f"127.0.0.1:{config.internal_port} {'open' if ok else 'closed'}"
+    ok = _tcp(config.haproxy_backend_port, "127.0.0.1")
+    return ok, f"127.0.0.1:{config.haproxy_backend_port} {'open' if ok else 'closed'}"
 
 
 def _public_udp(config, **_) -> Tuple[bool, str]:

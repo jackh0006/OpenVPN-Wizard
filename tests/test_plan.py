@@ -36,7 +36,12 @@ def test_plan_renders_valid_tcp_profiles(tmp_path):
     assert "port 1194" in server
     assert "tls-crypt" in server
     assert "data-ciphers AES-256-GCM" in server
-    assert "tls-version-min 1.2" in server
+    assert "tls-version-min 1.3" in server
+    assert "auth SHA384" in server
+    assert "tun-mtu 1400" in server
+    assert "mssfix 1360" in server
+    assert "sndbuf 524288" in server
+    assert "rcvbuf 524288" in server
     assert "comp-lzo" not in server
     assert "\ncompress " not in server
     assert "dh none" in server
@@ -44,6 +49,9 @@ def test_plan_renders_valid_tcp_profiles(tmp_path):
     for path in result["profiles"]:
         content = open(path).read()
         assert "proto tcp-client" in content
+        assert "tun-mtu 1400" in content
+        assert "mssfix 1360" in content
+        assert "sndbuf 524288" in content
         assert "remote vpn.example.com 443" in content
         assert "verify-x509-name server name" in content
         assert "auth-user-pass" in content
@@ -107,3 +115,18 @@ def test_plan_no_plaintext_password_in_profiles(tmp_path):
         content = path.read_text()
         assert "Correct-Horse-Battery-9" not in content
         assert "Another-Strong-Pass-42" not in content
+
+
+def test_every_user_gets_a_different_key_and_certificate(tmp_path):
+    import re
+
+    result = build_plan(_config(), tmp_path / "plan")
+    keys, certs = set(), set()
+    for path in result["profiles"]:
+        content = open(path).read()
+        key = re.search(r"<key>\s*(-----BEGIN.*?-----END [^-]+-----)", content, re.S).group(1)
+        cert = re.search(r"<cert>\s*(-----BEGIN.*?-----END [^-]+-----)", content, re.S).group(1)
+        keys.add(key)
+        certs.add(cert)
+    assert len(keys) == len(result["profiles"])
+    assert len(certs) == len(result["profiles"])
