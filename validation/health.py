@@ -1,50 +1,40 @@
-"""
-Service Health Checks - Monitor service status.
-"""
+"""Service health checks used by the UI and doctor command."""
+
+from __future__ import annotations
 
 import subprocess
-from typing import List, Dict
+from typing import Dict, List
+
 from core.config import InstallConfig
-from core.logger import get_logger
+from steps.openvpn import OpenVPNStep
 
 
 def check_service_health(service: str) -> Dict:
-    """Check health of a single service."""
     result = subprocess.run(
         ["systemctl", "status", service, "--no-pager"],
-        capture_output=True, text=True
+        capture_output=True, text=True, check=False,
     )
-
     active = result.returncode == 0 and "active (running)" in result.stdout
-
     return {
         "service": service,
         "active": active,
         "status": "running" if active else "stopped",
-        "details": result.stdout[:500] if result.stdout else result.stderr[:500],
+        "details": (result.stdout or result.stderr)[:500],
     }
 
 
 def check_all_services(config: InstallConfig) -> List[Dict]:
-    """Check health of all VPN services."""
-    services = [
-        "haproxy",
-        "openvpn@server",
-        "x-ui",
-        "nginx",
-    ]
-
-    results = []
-    for svc in services:
-        results.append(check_service_health(svc))
-
-    return results
+    services = [OpenVPNStep.openvpn_service_name()]
+    if config.use_haproxy:
+        services.append("haproxy")
+    if config.enable_vless:
+        services.append("x-ui")
+    return [check_service_health(service) for service in services]
 
 
 def get_service_logs(service: str, lines: int = 50) -> str:
-    """Get recent logs for a service."""
     result = subprocess.run(
         ["journalctl", "-u", service, "-n", str(lines), "--no-pager"],
-        capture_output=True, text=True
+        capture_output=True, text=True, check=False,
     )
     return result.stdout if result.returncode == 0 else result.stderr

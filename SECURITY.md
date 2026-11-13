@@ -1,97 +1,68 @@
-# OpenVPN Wizard - Security Policy
+# Security policy
 
-## Supported Versions
+## Supported versions
 
 | Version | Status |
-|---------|--------|
-| 1.0.x | ✅ Supported |
-| < 1.0 | ❌ Not supported |
+|---|---|
+| 2.x | ✅ supported |
+| 1.x | ❌ unsupported (hardcoded credentials, destructive HAProxy rewrite) |
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-If you discover a security vulnerability, please report it responsibly:
+Email **jackh109867@gmail.com** with:
 
-**Email:** jackh109867@gmail.com
+* description and impact,
+* reproduction steps,
+* affected version,
+* suggested fix if you have one.
 
-Please include:
-- Description of the vulnerability
-- Steps to reproduce
-- Impact assessment
-- Suggested fix (if you have one)
-- Your contact information (for credit)
+Acknowledgment within 48 hours; investigation within 5 business days; a patch
+as soon as it is tested. Good-faith researchers will be credited.
 
-## Our Response Timeline
+## v2 security controls
 
-1. **Acknowledgment:** Within 48 hours
-2. **Investigation:** Within 5 business days
-3. **Fix Development:** Within 14 days (depending on complexity)
-4. **Patch Release:** As soon as the fix is tested
-5. **Credit:** You will be credited (if you wish)
+| Area | Implementation |
+|---|---|
+| Data encryption | AES-256-GCM / CHACHA20-POLY1305 / AES-128-GCM (AEAD) |
+| Control channel | TLS 1.2 minimum, TLS 1.3 when available, `tls-crypt` |
+| Integrity | SHA-256 / AEAD tags |
+| Certificates | ECDSA P-384; 10-year CA; 825-day leaves |
+| Revocation | Real CRL, regenerated on every revocation, enforced by OpenVPN |
+| Authentication | Unique certificate + optional PAM password |
+| Password hashing | PBKDF2-HMAC-SHA256, 600,000 iterations |
+| Compression | Disabled |
+| Profile delivery | SSH/SCP or one-time token HTTPS; never HTTP |
+| File permissions | PKI private dir 700, keys 600, profiles 600, DB 600 |
+| Logging | Rotated file, password patterns redacted |
+| Telemetry | None |
 
-## Security Best Practices We Follow
+### Deliberate non-goals
 
-### Cryptography
+* Guaranteed invisibility to every DPI system. TCP/443 + `tls-crypt` is
+  robust, but active protocol blocking can still succeed.
+* Protecting data from the VPS provider, which terminates the tunnel.
+* Hiding metadata such as connection times or traffic volume.
 
-| Component | Standard | Implementation |
-|-----------|----------|---------------|
-| Data Encryption | AES-256-GCM | Military-grade |
-| Authentication | SHA384 | Strong integrity |
-| TLS Version | TLS 1.3 only | Modern, secure |
-| TLS Ciphers | TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256 | Best available |
-| TLS-Crypt | v1 (pre-shared key) | Extra obfuscation layer |
-| Certificates | RSA-4096 | Very strong key size |
-| DH Parameters | 2048-bit FFDHE | Forward secrecy |
-| Reality Protocol | X25519 + Short IDs | Undetectable handshake |
-| Password Hashing | SHA-512 crypt | System standard |
+## No secrets in source
 
-### File Permissions
+v2 contains no server IP, username, password or private key. The test suite
+generates throwaway certificates in temporary directories. If you find a
+committed key, treat it as a vulnerability and report it.
 
-| File/Directory | Permissions | Owner | Reason |
-|---------------|-------------|-------|--------|
-| Private keys | 600 | root | Only root can read |
-| Certificates | 644 | root | Public, but integrity protected |
-| User database | 600 | root | Contains password hashes |
-| Client profiles | 600 | root | Contains private keys |
-| PKI directory | 700 | root | Restricted access |
+## File permissions
 
-### Service Isolation
+| Path | Mode |
+|---|---|
+| `/etc/openvpn/pki/private/` | 700 |
+| `/etc/openvpn/pki/private/*.key` | 600 |
+| `/etc/openvpn/clients/` | 700 |
+| `/etc/openvpn/clients/*.ovpn` | 600 |
+| `/root/openvpn-wizard-credentials.txt` | 600 |
+| `/etc/openvpn/users.db` | 600 |
+| `/var/log/vpn-installer/install.log` | 600 |
 
-| Service | User | Group | Network Binding |
-|---------|------|-------|-----------------|
-| HAProxy | haproxy | haproxy | 0.0.0.0:443 (public) |
-| OpenVPN | nobody | nogroup | 127.0.0.1:1194 (local only) |
-| 3X-UI | root | root | 127.0.0.1:443, 0.0.0.0:10000,10004 |
+## Responsible disclosure
 
-### Network Security
-
-- ✅ IPv4 only (no IPv6 leaks)
-- ✅ DNS leak protection (block-outside-dns)
-- ✅ NAT rules for VPN subnet
-- ✅ Firewall rules restrict unnecessary access
-- ✅ All non-public services bound to 127.0.0.1
-
-### Code Security
-
-- ✅ No secrets in source code
-- ✅ Private keys generated on your machine only
-- ✅ All dependencies pinned and hash-verified
-- ✅ No telemetry or phone-home code
-- ✅ Open source for public inspection
-
-## Responsible Disclosure
-
-We believe in responsible security research. By reporting vulnerabilities to us first:
-- You give us time to fix before public disclosure
-- You help protect our users
-- You receive credit for your discovery
-- You avoid potential legal issues
-
-We will not take legal action against researchers who:
-- Act in good faith
-- Follow this disclosure policy
-- Do not access user data without permission
-- Do not disrupt service
-
-## Contact
-
-Security issues: jackh109867@gmail.com
+Do not access other users' data, disrupt service, or publish details before a
+fix is available. Good-faith research following this policy will not lead to
+legal action from the maintainers.

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vpn-installer"
-version = "1.0.0"
-description = "OpenVPN-over-HAProxy Installer - Stealthy, multiplexed VPN on port 443"
+version = "2.0.0"
+description = "OpenVPN Wizard - hardened, non-destructive OpenVPN with optional HAProxy multiplexing"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
@@ -18,7 +18,7 @@ keywords = [
     "vpn", "openvpn", "haproxy", "vless", "reality", "privacy", "security", "ubuntu"
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
@@ -26,17 +26,16 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Security",
     "Topic :: System :: Networking",
 ]
 requires-python = ">=3.10"
 dependencies = [
     "rich>=13.7.0",
-    "textual>=0.44.0",
     "typer>=0.9.0",
     "jinja2>=3.1.0",
     "cryptography>=42.0.0",
-    "psutil>=5.9.0",
     "requests>=2.31.0",
     "qrcode>=7.4.0",
 ]
@@ -50,9 +49,32 @@ dev = [
     "mypy>=1.5.0",
 ]
 
+[project.scripts]
+vpn-installer = "cli:app"
+
+[tool.setuptools]
+py-modules = ["cli"]
+
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["core", "ui", "steps", "management", "privacy", "validation", "utils"]
+include = [
+    "core*",
+    "ui*",
+    "steps*",
+    "management*",
+    "privacy*",
+    "validation*",
+    "utils*",
+    "templates*",
+]
+
+[tool.setuptools.package-data]
+templates = ["*.j2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.black]
 line-length = 100
@@ -61,9 +83,10 @@ target-version = ['py310']
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+exclude = ["templates"]
 
 [tool.mypy]
 python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = true
+disallow_untyped_defs = false

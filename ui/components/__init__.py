@@ -2,18 +2,14 @@
 UI Components - Reusable components with "Explain Like I'm 5" style.
 """
 
-from typing import Optional, Callable, List, Dict, Any
+from typing import List
 from rich.console import Console, Group
 from rich.panel import Panel
 from rich.text import Text
 from rich.table import Table
-from rich.columns import Columns
 from rich.align import Align
-from rich.padding import Padding
-from rich.rule import Rule
-from rich.markdown import Markdown
 
-from ui.theme import get_console, COLORS
+from ui.theme import get_console
 
 
 console = get_console()

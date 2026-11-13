@@ -1,0 +1,43 @@
+# >>> openvpn-wizard managed block (v2) - do not edit >>>
+# Added non-destructively by OpenVPN Wizard. Existing HAProxy configuration
+# above this block is preserved byte-for-byte. Remove this block to detach
+# the VPN from HAProxy; nothing else needs to change.
+
+frontend ovpn_wizard_frontend_{{ config.public_port }}
+    bind *:{{ config.public_port }}
+    mode tcp
+    option tcplog
+    timeout client 1h
+{% if config.enable_vless %}
+    # SNI inspection is only needed when VLESS shares this port. A short delay
+    # keeps TLS routing reliable without slowing down the VPN much.
+    tcp-request inspect-delay 2s
+    tcp-request content accept if { req_ssl_hello_type 1 }
+    use_backend ovpn_wizard_vless_1 if { req.ssl_sni -i {{ config.domain1 }} }
+    use_backend ovpn_wizard_vless_2 if { req.ssl_sni -i {{ config.domain2 }} }
+    use_backend ovpn_wizard_reality if { req.ssl_sni -i {{ config.reality_domain }} }
+{% endif %}
+    default_backend ovpn_wizard_openvpn
+
+backend ovpn_wizard_openvpn
+    mode tcp
+    option tcp-check
+    tcp-check connect
+    timeout connect 5s
+    timeout server 1h
+    server openvpn 127.0.0.1:{{ config.internal_port }}
+{% if config.enable_vless %}
+
+backend ovpn_wizard_vless_1
+    mode tcp
+    server vless1 127.0.0.1:{{ config.xui_inbound1_port }}
+
+backend ovpn_wizard_vless_2
+    mode tcp
+    server vless2 127.0.0.1:{{ config.xui_tls2_port }}
+
+backend ovpn_wizard_reality
+    mode tcp
+    server reality 127.0.0.1:{{ config.xui_inbound2_port }}
+{% endif %}
+# <<< openvpn-wizard managed block <<<

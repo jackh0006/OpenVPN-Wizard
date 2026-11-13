@@ -5,13 +5,11 @@ Step 3: Deploy 3X-UI with 2 Inbounds
 import asyncio
 import json
 import sqlite3
-import subprocess
 import time
 from typing import Callable
 from pathlib import Path
 from core.config import InstallConfig
 from steps.base import BaseStep
-from core.logger import get_logger
 from core.exceptions import ConfigError
 
 
@@ -34,6 +32,9 @@ class XUIStep(BaseStep):
         self,
         config: InstallConfig,
     ) -> bool:
+        """VLESS is optional; skip entirely when disabled."""
+        if not config.enable_vless:
+            return True
         """Check if OUR 3 inbounds exist in the 3X-UI database."""
         db_path = Path(config.xui_db)
         if not db_path.exists():
@@ -63,6 +64,14 @@ class XUIStep(BaseStep):
                 output_callback(msg)
             self.logger.info(msg)
 
+        if not config.enable_vless:
+            log("VLESS/Reality is disabled; 3X-UI step skipped")
+            return True
+        if not (config.domain1 and config.domain2 and config.reality_domain):
+            raise ConfigError(
+                "VLESS was enabled but domain1/domain2/reality_domain are missing."
+            )
+
         # Install 3X-UI if it's missing entirely
         result = self._run_cmd(["which", "x-ui"], check=False)
         if result.returncode != 0:
@@ -81,7 +90,7 @@ class XUIStep(BaseStep):
 
         # Backup existing DB
         log("Backing up existing 3X-UI database...")
-        backup_path = self._backup_file(config.xui_db)
+        self._backup_file(config.xui_db)
 
         # Generate inbound configurations
         log("Generating inbound configurations...")
@@ -131,7 +140,7 @@ class XUIStep(BaseStep):
             "listen": "127.0.0.1",
             "protocol": "vless",
             "settings": json.dumps({
-                "clients": [{"id": str(uuid.uuid4()), "flow": "xtls-rprx-vision"}],
+                "clients": [{"id": str(uuid.uuid4()), "flow": ""}],
                 "decryption": "none",
             }),
             "streamSettings": json.dumps({
@@ -166,7 +175,7 @@ class XUIStep(BaseStep):
             "listen": "127.0.0.1",
             "protocol": "vless",
             "settings": json.dumps({
-                "clients": [{"id": str(uuid.uuid4()), "flow": "xtls-rprx-vision"}],
+                "clients": [{"id": str(uuid.uuid4()), "flow": ""}],
                 "decryption": "none",
             }),
             "streamSettings": json.dumps({
@@ -208,7 +217,7 @@ class XUIStep(BaseStep):
             "listen": "127.0.0.1",
             "protocol": "vless",
             "settings": json.dumps({
-                "clients": [{"id": str(uuid.uuid4()), "flow": "xtls-rprx-vision"}],
+                "clients": [{"id": str(uuid.uuid4()), "flow": ""}],
                 "decryption": "none",
             }),
             "streamSettings": json.dumps({
@@ -273,24 +282,15 @@ class XUIStep(BaseStep):
         return priv
 
     async def _ensure_certificates(self, config: InstallConfig):
-        """Ensure TLS certificates exist for VLESS-TLS."""
-        cert_path = Path(config.xui_cert)
-        key_path = Path(config.xui_key)
-
-        if cert_path.exists() and key_path.exists():
-            self.logger.info("TLS certificates already exist")
-            return
-
-        self.logger.info("Generating self-signed TLS certificate for VLESS-TLS...")
-        # Generate self-signed cert for the domain
-        cmd = [
-            "openssl", "req", "-x509", "-newkey", "rsa:2048",
-            "-keyout", str(key_path), "-out", str(cert_path),
-            "-days", "365", "-nodes", "-subj", f"/CN={config.domain1}",
-        ]
-        self._run_cmd(cmd)
-        cert_path.chmod(0o644)
-        key_path.chmod(0o600)
+        """Ensure a usable TLS certificate exists for the VLESS-TLS inbounds."""
+        from utils.tls import ensure_certificate
+        source = ensure_certificate(
+            config,
+            [config.domain1, config.domain2],
+            config.xui_cert,
+            config.xui_key,
+        )
+        self.logger.info("TLS certificate source: %s", source)
 
     def _update_xui_db(self, db_path: str, inbounds: list):
         """Update 3X-UI SQLite database with inbound configurations.
@@ -308,17 +308,29 @@ class XUIStep(BaseStep):
             if not cursor.fetchone():
                 raise ConfigError("Inbounds table not found in 3X-UI database")
 
-            # Remove our previous inbounds AND anything else bound to our ports
-            # (two listeners can never share a port - xray would fail to start)
+            # Remove only OUR previous inbounds. Never delete a user's other
+            # inbound just because it shares a port - report the conflict.
             tags = tuple(i["tag"] for i in inbounds)
             ports = tuple(i["port"] for i in inbounds)
             cursor.execute(
-                f"DELETE FROM inbounds WHERE tag IN ({','.join('?' * len(tags))}) "
-                f"OR port IN ({','.join('?' * len(ports))})",
-                tags + ports,
+                f"SELECT tag, port FROM inbounds WHERE port IN ({','.join('?' * len(ports))}) "
+                f"AND tag NOT IN ({','.join('?' * len(tags))})",
+                ports + tags,
+            )
+            conflicts = cursor.fetchall()
+            if conflicts:
+                raise ConfigError(
+                    "3X-UI already has non-VPN inbounds on ports "
+                    + ", ".join(f"{port} ({tag})" for tag, port in conflicts)
+                    + ". Refusing to delete them. Move those inbounds to other "
+                    "ports or disable VLESS, then re-run."
+                )
+            cursor.execute(
+                f"DELETE FROM inbounds WHERE tag IN ({','.join('?' * len(tags))})",
+                tags,
             )
             if cursor.rowcount:
-                self.logger.info(f"Removed {cursor.rowcount} conflicting inbound(s)")
+                self.logger.info(f"Replaced {cursor.rowcount} existing VPN inbound(s)")
 
             # Insert new inbounds
             for inbound in inbounds:

@@ -1,201 +1,190 @@
-"""
-Validation Checklist - Post-install verification.
-"""
+"""Post-install validation, driven entirely by the chosen configuration."""
 
-import os
+from __future__ import annotations
+
 import socket
 import subprocess
-from typing import Callable, List, Tuple
-from dataclasses import dataclass
+from pathlib import Path
+from typing import List, Tuple
+
 from core.config import InstallConfig
 from core.logger import get_logger
+from core.render import validate_client_profile
+from steps.openvpn import OpenVPNStep
 
 
-@dataclass
-class ValidationCheck:
-    """Single validation check result."""
-    name: str
-    passed: bool
-    details: str = ""
+def _run(cmd: List[str]) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return subprocess.CompletedProcess(cmd, 127, "", str(exc))
+
+
+def _tcp(port: int, host: str) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(2)
+            return sock.connect_ex((host, port)) == 0
+    except OSError:
+        return False
 
 
 def run_validation(config: InstallConfig) -> List[Tuple[str, bool, str]]:
-    """Run all validation checks. Returns list of (name, passed, details)."""
     logger = get_logger()
-    checks = []
+    checks = [
+        (f"OpenVPN service ({OpenVPNStep.openvpn_service_name()})", _service_active, {}),
+        ("OpenVPN server config exists", _server_conf_exists, {}),
+        ("OpenVPN config uses TLS-crypt + AEAD", _server_crypto, {}),
+        ("CRL is valid", _crl_valid, {}),
+        ("IPv4 forwarding", _ip_forward, {}),
+        ("Client profiles exist and validate", _profiles_valid, {}),
+        ("Profile permissions are 600", _profile_perms, {}),
+        ("Certificate/key pairs match", _key_pairs, {}),
+    ]
 
-    # Define all checks
-    checks.append(("HAProxy listening on 0.0.0.0:443", check_haproxy_listen))
-    checks.append(("OpenVPN listening on 127.0.0.1:1194", check_openvpn_listen))
-    checks.append(("3X-UI inbound 10000 active (loopback)", lambda c: check_port_listen(c, 10000, "127.0.0.1", "3X-UI VLESS-TLS 1")))
-    checks.append(("3X-UI inbound 10004 active (loopback)", lambda c: check_port_listen(c, 10004, "127.0.0.1", "3X-UI VLESS-TLS 2")))
-    checks.append(("3X-UI inbound 443 active (loopback)", lambda c: check_port_listen(c, 443, "127.0.0.1", "3X-UI VLESS-Reality")))
-    checks.append(("IPv4 forwarding enabled", check_ip_forward))
-    checks.append(("NAT MASQUERADE rule exists", lambda c: check_nat_masquerade(c)))
-    checks.append(("OpenVPN config syntax OK", check_openvpn_syntax))
-    checks.append(("Client .ovpn connects", lambda c: check_client_profile(c)))
-    checks.append(("Internet through tunnel", check_tunnel_internet))
-    checks.append(("DNS leak test", check_dns_leak))
-    checks.append(("No IPv6 leaks", check_ipv6_leak))
+    if config.use_haproxy:
+        checks += [
+            ("HAProxy service active", _haproxy_active, {}),
+            ("HAProxy config syntax", _haproxy_syntax, {}),
+            (f"Public TCP/{config.public_port} listening", _public_tcp, {}),
+            (f"OpenVPN loopback TCP/{config.internal_port}", _loopback_tcp, {}),
+        ]
+    else:
+        if config.vpn_proto == "udp":
+            checks.append((f"Public UDP/{config.public_port} listening", _public_udp, {}))
+        else:
+            checks.append((f"Public TCP/{config.public_port} listening", _public_tcp, {}))
+
+    if config.free_tunnel:
+        checks.append(("NAT masquerade rule", _nat_rule, {}))
+    else:
+        checks.append(("Locked mode has no redirect-gateway", _locked_profile, {}))
 
     results = []
-    for name, check_fn in checks:
+    for name, fn, kwargs in checks:
         try:
-            passed, details = check_fn(config)
-            results.append((name, passed, details))
-            status = "PASS" if passed else "FAIL"
-            logger.info(f"Validation: {name} - {status}")
-            if not passed and details:
-                logger.warning(f"  Details: {details}")
-        except Exception as e:
-            results.append((name, False, f"Check error: {e}"))
-            logger.error(f"Validation error for {name}: {e}")
-
+            passed, details = fn(config, **kwargs)
+        except Exception as exc:
+            passed, details = False, f"check error: {exc}"
+        results.append((name, passed, details))
+        logger.info("Validation: %s - %s", name, "PASS" if passed else "FAIL")
     return results
 
 
-def check_port_listen(config: InstallConfig, port: int, bind_ip: str, name: str) -> Tuple[bool, str]:
-    """Check if a port is listening on given IP."""
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)
-        result = sock.connect_ex((bind_ip, port))
-        sock.close()
-        if result == 0:
-            return True, f"{name} listening on {bind_ip}:{port}"
-        else:
-            return False, f"{name} NOT listening on {bind_ip}:{port}"
-    except Exception as e:
-        return False, f"Error checking {name}: {e}"
+def _service_active(config, **_) -> Tuple[bool, str]:
+    name = OpenVPNStep.openvpn_service_name()
+    out = _run(["systemctl", "is-active", name]).stdout.strip()
+    return out == "active", out or "inactive"
 
 
-def check_haproxy_listen(config: InstallConfig) -> Tuple[bool, str]:
-    return check_port_listen(config, 443, "0.0.0.0", "HAProxy")
+def _server_conf_exists(config, **_) -> Tuple[bool, str]:
+    path = Path(config.openvpn_dir) / "server.conf"
+    return path.exists(), str(path)
 
 
-def check_openvpn_listen(config: InstallConfig) -> Tuple[bool, str]:
-    return check_port_listen(config, 1194, "127.0.0.1", "OpenVPN")
+def _server_crypto(config, **_) -> Tuple[bool, str]:
+    path = Path(config.openvpn_dir) / "server.conf"
+    if not path.exists():
+        return False, "server.conf missing"
+    text = path.read_text(errors="ignore")
+    needed = ["tls-crypt", "AES-256-GCM", "remote-cert-tls client", "verify-client-cert require"]
+    missing = [n for n in needed if n not in text]
+    return not missing, "ok" if not missing else f"missing: {', '.join(missing)}"
 
 
-def check_xui_inbound_10000(config: InstallConfig) -> Tuple[bool, str]:
-    return check_port_listen(config, 10000, "0.0.0.0", "3X-UI VLESS-TLS 1")
+def _crl_valid(config, **_) -> Tuple[bool, str]:
+    for path in (Path(config.pki_dir) / "crl.pem", Path(config.openvpn_dir) / "crl.pem"):
+        if path.exists() and "BEGIN X509 CRL" in path.read_text(errors="ignore"):
+            return True, str(path)
+    return False, "no valid CRL found"
 
 
-def check_xui_inbound_443(config: InstallConfig) -> Tuple[bool, str]:
-    return check_port_listen(config, 443, "127.0.0.1", "3X-UI VLESS-Reality")
+def _ip_forward(config, **_) -> Tuple[bool, str]:
+    if not config.free_tunnel:
+        return True, "not required in locked mode"
+    value = Path("/proc/sys/net/ipv4/ip_forward").read_text().strip()
+    return value == "1", f"ip_forward={value}"
 
 
-def check_ip_forward(config: InstallConfig) -> Tuple[bool, str]:
-    """Check if IPv4 forwarding is enabled."""
-    try:
-        result = subprocess.run(["cat", "/proc/sys/net/ipv4/ip_forward"], capture_output=True, text=True)
-        if "1" in result.stdout:
-            return True, "IPv4 forwarding enabled"
-        else:
-            return False, "IPv4 forwarding NOT enabled"
-    except Exception as e:
-        return False, f"Error checking ip_forward: {e}"
+def _profiles_valid(config, **_) -> Tuple[bool, str]:
+    missing, invalid = [], []
+    for user in config.users:
+        path = Path(config.profiles_dir) / f"{user.name}.ovpn"
+        if not path.exists():
+            missing.append(user.name)
+            continue
+        problems = validate_client_profile(path.read_text(errors="ignore"))
+        if problems:
+            invalid.append(f"{user.name}: {', '.join(problems)}")
+    if missing:
+        return False, "missing: " + ", ".join(missing)
+    if invalid:
+        return False, "; ".join(invalid)
+    return True, f"{len(config.users)} profile(s) valid"
 
 
-def check_nat_masquerade(config: InstallConfig) -> Tuple[bool, str]:
-    """Check if NAT MASQUERADE rule exists for VPN subnet."""
-    try:
-        result = subprocess.run(
-            ["iptables", "-t", "nat", "-L", "POSTROUTING", "-n", "-v"],
-            capture_output=True, text=True
-        )
-        if config.vpn_subnet in result.stdout and "MASQUERADE" in result.stdout:
-            return True, f"NAT MASQUERADE rule found for {config.vpn_subnet}"
-        else:
-            return False, f"NAT MASQUERADE rule NOT found for {config.vpn_subnet}"
-    except Exception as e:
-        return False, f"Error checking iptables: {e}"
+def _profile_perms(config, **_) -> Tuple[bool, str]:
+    bad = []
+    for user in config.users:
+        path = Path(config.profiles_dir) / f"{user.name}.ovpn"
+        if path.exists() and oct(path.stat().st_mode & 0o777) != "0o600":
+            bad.append(f"{user.name}={oct(path.stat().st_mode & 0o777)}")
+    return not bad, "all 600" if not bad else ", ".join(bad)
 
 
-def check_openvpn_syntax(config: InstallConfig) -> Tuple[bool, str]:
-    """Validate OpenVPN config statically (OpenVPN has no --dry-run)."""
-    import re
-    try:
-        with open("/etc/openvpn/server.conf") as f:
-            content = f.read()
-        required = ["port ", "proto tcp", "dev tun", "tls-crypt",
-                    "verify-client-cert require", "server "]
-        missing = [d for d in required if d not in content]
-        if missing:
-            return False, f"Config missing directives: {missing}"
-        # Referenced files must exist
-        for directive in ["ca", "cert", "key", "dh", "tls-crypt"]:
-            m = re.search(rf"^{directive}\s+(\S+)$", content, re.MULTILINE)
-            if m and not os.path.exists(m.group(1)):
-                return False, f"Referenced file missing: {m.group(1)}"
-        return True, "OpenVPN config directives and files OK"
-    except Exception as e:
-        return False, f"Error validating OpenVPN config: {e}"
+def _key_pairs(config, **_) -> Tuple[bool, str]:
+    pki = Path(config.pki_dir)
+    bad = []
+    for user in config.users:
+        cert = pki / "issued" / f"{user.safe_cert_name}.crt"
+        key = pki / "private" / f"{user.safe_cert_name}.key"
+        if not (cert.exists() and key.exists()):
+            bad.append(f"{user.name}: missing")
+            continue
+        a = _run(["openssl", "x509", "-in", str(cert), "-noout", "-pubkey"]).stdout.strip()
+        b = _run(["openssl", "pkey", "-in", str(key), "-pubout"]).stdout.strip()
+        if not a or a != b:
+            bad.append(f"{user.name}: mismatch")
+    return not bad, "ok" if not bad else "; ".join(bad)
 
 
-def check_client_profile(config: InstallConfig) -> Tuple[bool, str]:
-    """Check if client profile exists and is valid."""
-    import os
-    profile_path = f"/etc/openvpn/profiles/{config.client_name}.ovpn"
-    if os.path.exists(profile_path):
-        # Check it has required sections
-        with open(profile_path) as f:
-            content = f.read()
-        required = ["<ca>", "<cert>", "<key>", "<tls-crypt>"]
-        missing = [r for r in required if r not in content]
-        if not missing:
-            return True, f"Client profile exists with all sections"
-        else:
-            return False, f"Client profile missing sections: {missing}"
-    else:
-        return False, f"Client profile not found at {profile_path}"
+def _haproxy_active(config, **_) -> Tuple[bool, str]:
+    out = _run(["systemctl", "is-active", "haproxy"]).stdout.strip()
+    return out == "active", out or "inactive"
 
 
-def check_tunnel_internet(config: InstallConfig) -> Tuple[bool, str]:
-    """Check if internet works through tunnel (requires active connection)."""
-    # This would require an actual VPN connection to test
-    # For now, just check the profile has correct settings
-    profile_path = f"/etc/openvpn/profiles/{config.client_name}.ovpn"
-    try:
-        with open(profile_path) as f:
-            content = f.read()
-        checks = [
-            ("redirect-gateway", "redirect-gateway" in content),
-            ("DNS 1.1.1.1", "1.1.1.1" in content),
-            ("DNS 8.8.8.8", "8.8.8.8" in content),
-            ("block-outside-dns", "block-outside-dns" in content),
-        ]
-        failed = [name for name, passed in checks if not passed]
-        if not failed:
-            return True, "Client profile has correct tunnel settings"
-        else:
-            return False, f"Client profile missing: {', '.join(failed)}"
-    except Exception as e:
-        return False, f"Error checking client profile: {e}"
+def _haproxy_syntax(config, **_) -> Tuple[bool, str]:
+    result = _run(["haproxy", "-c", "-f", config.haproxy_cfg])
+    return result.returncode == 0, (result.stderr or result.stdout or "ok").strip()[-500:]
 
 
-def check_dns_leak(config: InstallConfig) -> Tuple[bool, str]:
-    """Check DNS leak protection settings."""
-    # Check OpenVPN config pushes DNS
-    try:
-        with open("/etc/openvpn/server.conf") as f:
-            content = f.read()
-        if "dhcp-option DNS 1.1.1.1" in content and "dhcp-option DNS 8.8.8.8" in content:
-            return True, "OpenVPN pushes DNS servers (1.1.1.1, 8.8.8.8)"
-        else:
-            return False, "OpenVPN does not push DNS servers"
-    except Exception as e:
-        return False, f"Error checking DNS config: {e}"
+def _public_tcp(config, **_) -> Tuple[bool, str]:
+    ok = _tcp(config.public_port, "127.0.0.1")
+    return ok, f"TCP/{config.public_port} {'open' if ok else 'closed'}"
 
 
-def check_ipv6_leak(config: InstallConfig) -> Tuple[bool, str]:
-    """Check IPv6 is disabled."""
-    try:
-        # Check sysctl
-        result = subprocess.run(["sysctl", "net.ipv6.conf.all.disable_ipv6"], capture_output=True, text=True)
-        if "1" in result.stdout:
-            return True, "IPv6 disabled via sysctl"
-        else:
-            return False, "IPv6 NOT disabled"
-    except Exception as e:
-        return False, f"Error checking IPv6: {e}"
+def _loopback_tcp(config, **_) -> Tuple[bool, str]:
+    ok = _tcp(config.internal_port, "127.0.0.1")
+    return ok, f"127.0.0.1:{config.internal_port} {'open' if ok else 'closed'}"
+
+
+def _public_udp(config, **_) -> Tuple[bool, str]:
+    out = _run(["ss", "-lunH", f"sport = :{config.public_port}"]).stdout.strip()
+    return bool(out), out.splitlines()[0] if out else "not listening"
+
+
+def _nat_rule(config, **_) -> Tuple[bool, str]:
+    out = _run(["iptables", "-t", "nat", "-S", "POSTROUTING"]).stdout
+    ok = config.vpn_subnet in out and "MASQUERADE" in out
+    return ok, "present" if ok else "missing"
+
+
+def _locked_profile(config, **_) -> Tuple[bool, str]:
+    for user in config.users:
+        path = Path(config.profiles_dir) / f"{user.name}.ovpn"
+        if not path.exists():
+            return False, f"{user.name}: profile missing"
+        text = path.read_text(errors="ignore")
+        if "route-nopull" not in text or 'pull-filter ignore "redirect-gateway"' not in text:
+            return False, f"{user.name}: locked-mode directives missing"
+    return True, "all profiles are locked"

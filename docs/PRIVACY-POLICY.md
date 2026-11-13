@@ -14,10 +14,14 @@ We do not collect:
 
 ## What We Send
 
-**Nothing.** The installer never connects to any external server except:
+**Nothing.** The installer connects only to:
 
-1. **Package repositories (apt)** — To install required software packages on your VPS
-2. **Your specified domains** — For SNI-based traffic routing (these are your own domains)
+1. **Package repositories (apt)** — to install the required software
+2. **A public IP echo service** — once, to pre-fill the server IP (you confirm it)
+3. **Let's Encrypt** — only if you explicitly enable the optional VLESS listener
+   with a domain; certificate validation is the only reason
+
+There is no telemetry, analytics, update check or phone-home code.
 
 ## What We Store
 
@@ -25,12 +29,14 @@ Everything stays on your VPS. Nothing is sent to us or any third party:
 
 | Location | What's Stored |
 |----------|--------------|
-| `/etc/openvpn/` | VPN configuration, certificates, keys |
+| `/etc/openvpn/` | Server configuration, runtime certs, CRL |
 | `/etc/openvpn/pki/` | Certificate Authority, server/client certificates |
-| `/etc/openvpn/users.db` | User database (encrypted password hashes) |
-| `/etc/openvpn/profiles/` | Client .ovpn profile files |
-| `/etc/haproxy/` | HAProxy routing configuration |
-| `/etc/x-ui/` | 3X-UI panel configuration |
+| `/etc/openvpn/clients/` | Client .ovpn profiles (mode 600) |
+| `/etc/openvpn/users.db` | User metadata and PBKDF2 hashes |
+| `/root/openvpn-wizard-credentials.txt` | One-time credentials sheet (mode 600) |
+| `/var/log/vpn-installer/` | Rotated installer log, redacted |
+| `/etc/haproxy/` | One marked VPN block inside your config |
+| `/etc/x-ui/` | Optional 3X-UI configuration |
 
 ## Third-Party Services
 

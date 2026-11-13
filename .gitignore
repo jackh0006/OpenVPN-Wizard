@@ -81,3 +81,6 @@ build/
 # Package files
 *.tar.gz
 *.whl
+# Client profiles and dry-run output
+*.ovpn
+vpn-plan/

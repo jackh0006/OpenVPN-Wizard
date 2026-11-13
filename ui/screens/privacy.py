@@ -3,16 +3,12 @@ Privacy Education Screen - What each entity sees/doesn't see.
 Teaches like a 5-year-old with visual explanations.
 """
 
-import asyncio
 from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
-from rich.columns import Columns
 from rich.text import Text
-from rich.align import Align
-from rich.rule import Rule
 
-from ui.theme import get_console, COLORS
+from ui.theme import get_console
 from ui.components import InfoBox, CreditsFooter, SectionHeader
 
 

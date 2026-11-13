@@ -112,7 +112,7 @@ fi
 
 # ── Step 6: Clone Repository ──────────────────────────────────────
 REPO_URL="https://github.com/jackh0006/openvpn-wizard.git"
-CLONE_DIR="/tmp/openvpn-wizard"
+CLONE_DIR="/opt/openvpn-wizard-src"
 
 # Move to a stable directory first - users often run this script FROM
 # the clone dir (git clone ... && cd ...), and removing our own CWD

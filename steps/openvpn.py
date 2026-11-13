@@ -1,159 +1,213 @@
 """
-Step 6: Write OpenVPN Server Configuration
+Step: render and activate the OpenVPN server configuration.
+
+Behind HAProxy the daemon binds only to 127.0.0.1.  In UDP (or --no-haproxy)
+mode it binds the public port directly.  The step never leaves a broken
+config live: it validates statically, restarts systemd, and restores the
+previous file if the daemon does not come up.
 """
 
+from __future__ import annotations
+
 import asyncio
-from typing import Callable
+import glob
+import shutil
+import time
 from pathlib import Path
+from typing import Callable
+
 from core.config import InstallConfig
+from core.exceptions import ServiceError, SystemError
+from core.render import render_server_conf, validate_rendered_server, utc_now
 from steps.base import BaseStep
-from core.logger import get_logger
+
+OPENVPN_MARKER = "# OpenVPN Wizard v2 - server configuration"
 
 
 class OpenVPNStep(BaseStep):
-    """Write OpenVPN server configuration."""
-
     @property
     def name(self) -> str:
         return "openvpn"
 
     @property
     def display_name(self) -> str:
-        return "Write OpenVPN Server Config"
+        return "Configure OpenVPN server"
 
     @property
     def description(self) -> str:
-        return "Create server.conf with TLS-crypt v1, AES-256-GCM, TLS 1.3 only, PAM auth"
+        return "AEAD ciphers, TLS 1.2+, tls-crypt, CRL, PAM or certificate-only auth"
 
-    SERVER_CONF = """port 1194
-proto tcp4
-local 127.0.0.1
-dev tun
-user nobody
-group nogroup
-persist-key
-persist-tun
-keepalive 10 60
-cipher AES-256-GCM
-auth SHA384
-tls-version-min 1.3
-tls-ciphersuites TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
-tls-crypt /etc/openvpn/ta.key
-ca /etc/openvpn/ca.crt
-cert /etc/openvpn/server.crt
-key /etc/openvpn/server.key
-dh /etc/openvpn/dh.pem
-plugin /usr/lib/x86_64-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so login
-username-as-common-name
-verify-client-cert require
-server 10.8.0.0 255.255.255.0
-topology subnet
-push "redirect-gateway def1 bypass-dhcp"
-push "dhcp-option DNS 1.1.1.1"
-push "dhcp-option DNS 8.8.8.8"
-push "block-outside-dns"
-reneg-sec 0
-explicit-exit-notify 0
-log-append /var/log/openvpn.log
-verb 3
-mute 20
-# Performance / stealth
-sndbuf 0
-rcvbuf 0
-push "sndbuf 0"
-push "rcvbuf 0"
-"""
+    async def is_already_done(self, config: InstallConfig) -> bool:
+        # Always re-render: this is fast and guarantees settings chosen in the
+        # wizard are actually applied (ports, protocol, auth, access policy).
+        return False
 
-    async def is_already_done(
-        self,
-        config: InstallConfig,
-    ) -> bool:
-        """Check if OpenVPN config already exists."""
-        conf_path = Path(config.openvpn_dir) / "server.conf"
-        if not conf_path.exists():
-            return False
-        content = conf_path.read_text()
-        return "AES-256-GCM" in content and "tls-crypt" in content
-
-    async def execute(
-        self,
-        config: InstallConfig,
-        output_callback: Callable[[str], None] = None,
-    ) -> bool:
-        """Execute OpenVPN server config creation."""
-
+    async def execute(self, config: InstallConfig,
+                      output_callback: Callable[[str], None] = None) -> bool:
         def log(msg: str):
             if output_callback:
                 output_callback(msg)
             self.logger.info(msg)
 
-        log("Backing up existing OpenVPN config...")
-        backup_path = self._backup_file(config.openvpn_dir + "/server.conf")
+        conf_path = Path(config.openvpn_dir) / "server.conf"
+        conf_path.parent.mkdir(parents=True, exist_ok=True)
+        Path("/var/log/openvpn").mkdir(parents=True, exist_ok=True)
+        Path("/var/lib/openvpn").mkdir(parents=True, exist_ok=True)
+        Path("/run/openvpn").mkdir(parents=True, exist_ok=True)
+        try:
+            import os
+            os.chmod("/var/log/openvpn", 0o750)
+            os.chmod("/var/lib/openvpn", 0o755)
+            os.chmod(config.openvpn_dir, 0o750)
+        except OSError:
+            pass
 
-        log("Writing OpenVPN server configuration...")
-        server_conf = self._build_server_conf(config)
-        self._write_file(config.openvpn_dir + "/server.conf", server_conf, mode=0o644)
+        pam_plugin = self._find_pam_plugin() if config.auth_mode == "userpass" else None
+        log("Rendering server configuration...")
+        rendered = render_server_conf(config, pam_plugin=pam_plugin)
 
-        # Validate: required directives present + referenced files exist
-        log("Validating OpenVPN configuration...")
-        self._validate_conf(config, server_conf, log)
+        problems = validate_rendered_server(rendered, config, self.logger)
+        if problems:
+            raise SystemError(
+                "Generated OpenVPN config failed validation: " + "; ".join(problems),
+                fix_hint="Re-run 'vpn-installer doctor'. No live file was changed.",
+            )
 
-        # Restart OpenVPN so the (possibly new) config takes effect
-        # (on re-runs the services step may be skipped, so we restart here)
+        backup = None
+        if conf_path.exists():
+            backup = Path(config.backup_dir) / (
+                f"openvpn-server.conf.{time.strftime('%Y%m%d-%H%M%S')}"
+            )
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(conf_path, backup)
+            log(f"Backup created: {backup}")
+
+        log("Writing server configuration...")
+        self._write_file(str(conf_path), rendered, mode=0o600, backup=False)
+
+        log("Installing systemd hardening drop-in...")
+        self._install_hardening(config)
+
         log("Restarting OpenVPN...")
-        if not self._systemctl("restart", "openvpn@server"):
-            if backup_path:
-                log("OpenVPN failed with new config - restoring backup...")
-                self._restore_backup(config.openvpn_dir + "/server.conf")
-                self._systemctl("restart", "openvpn@server")
-            raise RuntimeError("Failed to restart OpenVPN - check 'journalctl -u openvpn@server'")
+        service = self.openvpn_service_name()
+        restart = self._run_cmd(["systemctl", "restart", service], check=False)
         await asyncio.sleep(2)
-        if not self._is_service_active("openvpn@server"):
-            raise RuntimeError("OpenVPN did not come back up after restart")
-        log("  ✓ OpenVPN active")
+        if restart.returncode != 0 or not self._is_service_active(service):
+            status = self._run_cmd(
+                ["systemctl", "status", service, "--no-pager", "-l"], check=False
+            )
+            journal = self._run_cmd(
+                ["journalctl", "-u", service, "-n", "60", "--no-pager"], check=False
+            )
+            if backup and backup.exists():
+                shutil.copy2(backup, conf_path)
+                self._run_cmd(["systemctl", "restart", service], check=False)
+                restored = " The previous configuration was restored."
+            else:
+                restored = " No previous configuration existed."
+            raise ServiceError(
+                f"OpenVPN did not start with the new configuration.{restored}\n"
+                f"{(journal.stdout or status.stdout or '')[-2500:]}",
+                service=service,
+                fix_hint=(
+                    "Common causes: a certificate/key mismatch, port already in "
+                    "use, or an invalid line in a pre-existing file. Check "
+                    f"'journalctl -u {service} -n 100 --no-pager'."
+                ),
+            )
 
-        log("OpenVPN configuration valid")
+        # Verify the listener rather than trusting systemd alone.
+        if config.vpn_proto == "udp":
+            listening = await self._wait_for_udp_port(config.openvpn_listen_port)
+        else:
+            listening = await self._wait_for_port(
+                config.openvpn_listen_port, config.openvpn_bind_address
+            )
+        if not listening:
+            raise ServiceError(
+                f"OpenVPN is active but not listening on "
+                f"{config.openvpn_bind_address}:{config.openvpn_listen_port}.",
+                service=service,
+                fix_hint=(
+                    "Check for another process on that port with "
+                    f"'ss -ltnup | grep :{config.openvpn_listen_port}'."
+                ),
+            )
+
+        log(f"  ✓ OpenVPN active on {config.openvpn_bind_address}:{config.openvpn_listen_port}")
         return True
 
+    # ── Helpers ──────────────────────────────────────────────────────────
+
     def _find_pam_plugin(self) -> str:
-        """Locate the OpenVPN PAM auth plugin (arch-independent)."""
-        import glob
         candidates = glob.glob("/usr/lib/*/openvpn/plugins/openvpn-plugin-auth-pam.so")
-        if candidates:
-            return candidates[0]
-        return "/usr/lib/x86_64-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so"
+        candidates += glob.glob("/usr/lib/openvpn/openvpn-plugin-auth-pam.so")
+        if not candidates:
+            raise SystemError(
+                "OpenVPN PAM authentication plugin was not found.",
+                command="openvpn-plugin-auth-pam.so",
+                fix_hint=(
+                    "Install it with: apt-get install -y openvpn "
+                    "(the plugin ships with the openvpn package on Ubuntu)."
+                ),
+            )
+        return candidates[0]
 
-    def _build_server_conf(self, config: InstallConfig) -> str:
-        """Build server.conf with the detected PAM plugin path."""
-        conf = self.SERVER_CONF.replace(
-            "plugin /usr/lib/x86_64-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so login",
-            f"plugin {self._find_pam_plugin()} login",
-        )
-        return conf
+    @staticmethod
+    def openvpn_service_name() -> str:
+        """Ubuntu/Debian use openvpn@server; upstream uses openvpn-server@server."""
+        for base in ("/lib/systemd/system", "/usr/lib/systemd/system"):
+            if Path(base, "openvpn@.service").exists():
+                return "openvpn@server"
+            if Path(base, "openvpn-server@.service").exists():
+                return "openvpn-server@server"
+        return "openvpn@server"
 
-    def _validate_conf(self, config: InstallConfig, content: str, log):
-        """Static validation of server.conf (OpenVPN has no --dry-run)."""
-        required_directives = [
-            "port ", "proto tcp", "dev tun", "tls-crypt", "ca ", "cert ",
-            "key ", "dh ", "server ", "verify-client-cert require",
-        ]
-        missing = [d for d in required_directives if d not in content]
-        if missing:
-            raise RuntimeError(f"Generated config missing directives: {missing}")
+    def _install_hardening(self, config: InstallConfig) -> None:
+        service = self.openvpn_service_name()
+        unit = service.split("@", 1)[0] + "@.service"
+        dropin_dir = Path("/etc/systemd/system") / f"{unit}.d"
+        dropin_dir.mkdir(parents=True, exist_ok=True)
+        content = f"""# Managed by OpenVPN Wizard v2 ({utc_now()})
+[Service]
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RemoveIPC=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+ReadWritePaths=/var/log/openvpn /var/lib/openvpn /run/openvpn
+"""
+        path = dropin_dir / "10-openvpn-wizard.conf"
+        if not path.exists() or path.read_text() != content:
+            path.write_text(content)
+        self._run_cmd(["systemctl", "daemon-reload"], check=False)
 
-        # Every referenced file must exist (PKI step runs before this one)
-        import re
-        for directive in ["ca", "cert", "key", "dh", "tls-crypt"]:
-            m = re.search(rf"^{directive}\s+(\S+)$", content, re.MULTILINE)
-            if m and not Path(m.group(1)).exists():
-                raise RuntimeError(f"Config references missing file: {m.group(1)}")
+    async def _wait_for_port(self, port: int, host: str, attempts: int = 15) -> bool:
+        import socket
+        for _ in range(attempts):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.settimeout(1)
+                    if sock.connect_ex((host, port)) == 0:
+                        return True
+            except OSError:
+                pass
+            await asyncio.sleep(1)
+        return False
 
-        log("  ✓ All required directives present, referenced files exist")
-
-    async def rollback(self, config: InstallConfig, rollback_data: dict) -> bool:
-        """Restore OpenVPN config from backup."""
-        backup_path = rollback_data.get("backup_path")
-        if backup_path and Path(backup_path).exists():
-            self.logger.info("Restoring OpenVPN config from backup...")
-            return self._restore_backup(config.openvpn_dir + "/server.conf")
+    async def _wait_for_udp_port(self, port: int, attempts: int = 15) -> bool:
+        for _ in range(attempts):
+            result = self._run_cmd(
+                ["ss", "-lunH", f"sport = :{port}"], check=False
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return True
+            await asyncio.sleep(1)
         return False

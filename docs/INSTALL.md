@@ -1,137 +1,89 @@
-# OpenVPN Wizard - Installation Guide
+# Installation guide (v2)
 
-## System Requirements
+## Requirements
 
-| Requirement | Minimum | Recommended |
-|-------------|---------|-------------|
-| OS | Ubuntu 22.04 LTS | Ubuntu 24.04 LTS |
-| Architecture | AMD64 or ARM64 | AMD64 or ARM64 |
-| RAM | 512 MB | 1 GB+ |
-| CPU | 1 vCPU | 2+ vCPU |
-| Disk | 10 GB | 20 GB+ |
-| Network | Public IPv4 | Public IPv4 |
-| Ports | 443 open | 443, 10000, 10004 open |
+| Item | Requirement |
+|---|---|
+| OS | Ubuntu 22.04/24.04 or Debian 12 |
+| Architecture | x86_64 or arm64 |
+| RAM | 512 MB minimum, 1 GB recommended |
+| Disk | 2 GB free |
+| Network | Public IPv4 address |
+| DNS | Optional domain pointing at the VPS |
+| Access | root / sudo |
 
-## Prerequisites
+You do **not** need three domains. VLESS/Reality is optional and off by
+default.
 
-### 1. Get a VPS
-Choose any VPS provider (DigitalOcean, Vultr, Linode, Hetzner, AWS, etc.) and create an Ubuntu 22.04 or 24.04 instance.
+## Recommended install
 
-### 2. Point Your Domains
-You need three domain names pointing to your VPS IP:
+```bash
+curl -fsSL https://raw.githubusercontent.com/jackh0006/OpenVPN-Wizard/main/install.sh | sudo bash
+```
 
-| Domain | DNS Record | Points To |
-|--------|------------|-----------|
-| Domain 1 | A record | Your VPS IP |
-| Domain 2 | A record | Your VPS IP |
-| Reality Domain | A record | Your VPS IP (or use any popular site) |
+The bootstrap installs Python, clones the source to `/opt/openvpn-wizard-src`,
+creates `/opt/vpn-installer`, and starts the interactive wizard.
 
-### 3. Open Firewall Ports
-Ensure these ports are open on your VPS:
-
-| Port | Protocol | Purpose |
-|------|----------|---------|
-| 22 | TCP | SSH (for management) |
-| 443 | TCP | HAProxy (public traffic) |
-| 10000 | TCP | VLESS-TLS inbound 1 |
-| 10004 | TCP | VLESS-TLS inbound 2 |
-
-## Installation Steps
-
-### Step 1: Clone the Repository
+## From a clone
 
 ```bash
 git clone https://github.com/jackh0006/OpenVPN-Wizard.git
 cd OpenVPN-Wizard
+sudo bash install.sh
 ```
 
-### Step 2: Run the Quick Installer
+## Safe dry run first
 
 ```bash
-chmod +x quick_install.sh
-sudo ./quick_install.sh
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e .
+vpn-installer plan --output ./vpn-plan --profiles 3
 ```
 
-The quick installer will:
-- Install Python 3 and pip
-- Create a virtual environment
-- Install all dependencies
-- Set up the vpn-installer command
+This renders real certificate/key files and every config into `./vpn-plan/`
+without changing the system. Inspect them, then run the real installer.
 
-### Step 3: Run the Wizard
+## Questions you will be asked
 
-```bash
-sudo vpn-installer install
-```
+1. **Server public IP** — auto-detected, confirm or replace.
+2. **Domain or IP endpoint** — how clients address the server.
+3. **Public port** — default 443.
+4. **TCP or UDP** — TCP can share 443 via HAProxy; UDP binds directly.
+5. **Authentication** — certificate + password, or certificate only.
+6. **Access** — free (full tunnel) or locked (VPN network only).
+7. **Profile prefix** — used in `.ovpn` file names.
+8. **How many profiles** — 1 to 50, each with a unique key.
+9. **HAProxy** — attach the VPN to the existing config (TCP only).
+10. **VLESS** — optional advanced multiplexing on the same 443 listener.
 
-Follow the on-screen prompts. The wizard will guide you through:
-1. Welcome screen
-2. Privacy education
-3. Configuration (IP, passwords, domains)
-4. Step-by-step confirmation
-5. Installation with progress bar
-6. Success with profile download
+## Ports
 
-## Post-Installation
+| Port | Protocol | When |
+|---|---|---|
+| 22 | TCP | SSH management |
+| 443 | TCP | Default VPN/HAProxy listener |
+| 443 | UDP | Default when UDP is chosen |
+| 10000, 10004 | TCP | Loopback only, optional VLESS |
+| 80 | TCP | Only during optional Let's Encrypt HTTP-01 |
 
-### Verify Installation
+The installer opens the VPN port. It never resets or flushes the firewall.
+
+## After install
 
 ```bash
 sudo vpn-installer validate
+sudo vpn-installer doctor
 ```
 
-### Check Service Status
+Download the profiles (see `docs/DOWNLOAD.md`) and import them into OpenVPN
+Connect, OpenVPN GUI or Tunnelblick.
+
+## Uninstall
 
 ```bash
-systemctl status haproxy openvpn@server x-ui
+sudo vpn-installer uninstall          # stop + detach, keep keys/profiles
+sudo vpn-installer uninstall --purge  # also delete installer-owned keys/data
 ```
 
-### Download Your Profile
-
-```bash
-# From the server
-cat /etc/openvpn/profiles/YOUR_PROFILE_NAME.ovpn
-
-# Or download via web
-curl http://YOUR_VPS_IP/YOUR_PROFILE_NAME.ovpn -o profile.ovpn
-```
-
-## Architecture
-
-```
-Internet → Port 443 → HAProxy → SNI Routing → Backends (127.0.0.1)
-                                    ├── OpenVPN (1194)
-                                    ├── VLESS-TLS (10000)
-                                    ├── VLESS-TLS (10004)
-                                    └── VLESS-Reality (443 local)
-```
-
-## File Locations
-
-| File | Purpose |
-|------|---------|
-| `/etc/haproxy/haproxy.cfg` | HAProxy configuration |
-| `/etc/openvpn/server.conf` | OpenVPN server configuration |
-| `/etc/openvpn/pki/` | Certificate authority and keys |
-| `/etc/openvpn/users.db` | User database |
-| `/etc/openvpn/profiles/*.ovpn` | Client profiles |
-| `/etc/x-ui/x-ui.db` | 3X-UI database |
-| `/var/www/vpn-profiles/` | Web-downloadable profiles |
-
-## Troubleshooting Installation
-
-| Issue | Solution |
-|-------|----------|
-| Permission denied | Run with `sudo` |
-| Port 443 in use | Stop conflicting services first |
-| Domain not resolving | Check DNS A records |
-| Package install fails | Run `sudo apt-get update` first |
-| 3X-UI not starting | Check `/etc/x-ui/x-ui.db` exists |
-
-## Uninstalling
-
-```bash
-sudo vpn-installer uninstall
-```
-
-⚠️ This removes all VPN components and cannot be undone.
+Packages and unrelated HAProxy/iptables rules are left alone.
