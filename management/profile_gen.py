@@ -36,7 +36,17 @@ class ProfileGenerator:
         ca_crt = read_pem(self.pki_dir / "ca.crt", "CERTIFICATE")
         client_crt = read_pem(self.pki_dir / "issued" / f"{cert_name}.crt", "CERTIFICATE")
         client_key = read_private_key(self.pki_dir / "private" / f"{cert_name}.key")
-        ta_key = read_pem(self.pki_dir / "ta.key", "OpenVPN Static key V1")
+        ta_path = self.pki_dir / "ta.key"
+        if not ta_path.exists():
+            for candidate in (
+                Path("/etc/openvpn/ta.key"),
+                Path("/etc/openvpn/keys/ta.key"),
+                Path("/root/easy-rsa/ta.key"),
+            ):
+                if candidate.exists():
+                    ta_path = candidate
+                    break
+        ta_key = read_pem(ta_path, "OpenVPN Static key V1")
 
         self._assert_key_matches_cert(client_crt, client_key, user)
 
@@ -80,6 +90,14 @@ class ProfileGenerator:
         return path
 
     def save_all(self, directory: Optional[Path] = None) -> list[Path]:
+        certs = [user.safe_cert_name for user in self.config.users]
+        if len(certs) != len(set(certs)):
+            raise CryptoError(
+                "Refusing to generate profiles: two users share the same "
+                "certificate name. Each user must have a unique key.",
+                operation="generate_profiles",
+                fix_hint="Give every profile a different username, then retry.",
+            )
         return [self.save(user, directory) for user in self.config.users]
 
     # ── Validation ───────────────────────────────────────────────────────

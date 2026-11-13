@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from core.config import ClientSpec, InstallConfig
 
-STATE_VERSION = "2.0.0"
+STATE_VERSION = "2.1.0"
 
 
 @dataclass

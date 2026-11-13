@@ -9,9 +9,9 @@ against the same PKI directory as the installer.
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
 import subprocess
-import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -78,6 +78,11 @@ class UserManager:
         for existing in self.list_users():
             if existing["username"] == username:
                 raise ValueError(f"Username {username!r} is already used by {existing['name']!r}.")
+            if (existing.get("cert_name") or existing["username"]) == sanitize_cert_name(username):
+                raise ValueError(
+                    f"Certificate name {sanitize_cert_name(username)!r} is already "
+                    f"used by {existing['name']!r}. Choose a different username."
+                )
 
         if self.config.auth_mode == "userpass":
             password = password or generate_password()
@@ -174,7 +179,7 @@ class UserManager:
         cert_name = user.get("cert_name") or user["username"]
         self._revoke_certificate(cert_name)
         # Easy-RSA cannot reuse a revoked CN; issue a fresh unique CN.
-        new_cert = sanitize_cert_name(f"{cert_name}-{int(time.time())}")
+        new_cert = sanitize_cert_name(f"{cert_name}-{secrets.token_hex(4)}")
         self._issue_certificate(new_cert)
         spec = ClientSpec(
             name=user["name"], username=user["username"],

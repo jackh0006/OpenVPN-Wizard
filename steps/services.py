@@ -57,7 +57,14 @@ class ServicesStep(BaseStep):
                         "run 'systemctl daemon-reload'. Nothing was changed."
                     ),
                 )
-            start = self._run_cmd(["systemctl", "restart", service], check=False)
+            if self._is_service_active(service):
+                # HAProxy supports a graceful reload; avoid dropping live
+                # connections when there is nothing new to apply.
+                action = "reload" if service == "haproxy" else None
+                start = (self._run_cmd(["systemctl", action, service], check=False)
+                         if action else self._run_cmd(["systemctl", "start", service], check=False))
+            else:
+                start = self._run_cmd(["systemctl", "start", service], check=False)
             await asyncio.sleep(2)
             if start.returncode != 0 or not self._is_service_active(service):
                 journal = self._run_cmd(
@@ -76,7 +83,7 @@ class ServicesStep(BaseStep):
     async def _verify_listeners(self, config: InstallConfig, log) -> None:
         if config.use_haproxy:
             await self._wait_tcp(config.public_port, "127.0.0.1", "HAProxy public listener", log)
-            await self._wait_tcp(config.internal_port, "127.0.0.1", "OpenVPN loopback", log)
+            await self._wait_tcp(config.openvpn_listen_port, "127.0.0.1", "OpenVPN loopback", log)
         else:
             if config.vpn_proto == "udp":
                 await self._wait_udp(config.public_port, "OpenVPN UDP", log)

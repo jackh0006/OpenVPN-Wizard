@@ -1,15 +1,19 @@
 """
 Non-destructive HAProxy integration.
 
-The wizard NEVER rewrites or deletes unrelated HAProxy configuration.  It
-appends a clearly marked, self-contained block at the end of
-``/etc/haproxy/haproxy.cfg`` (or replaces only that block on later runs).
-Every change is backed up first and validated with ``haproxy -c`` before it
-is put live; a failed validation automatically restores the previous file.
+Three cases are handled:
 
-Only one frontend can bind a given TCP port, so we refuse to touch a config
-in which some *other* frontend already owns the requested port.  That is
-reported as an actionable conflict instead of silently breaking it.
+1. **No listener on the target port** — append a marked standalone frontend and
+   backend. Existing config is untouched.
+2. **An existing TCP frontend already binds the port** — if it already routes
+   to the OpenVPN loopback port, reuse it and change nothing. Otherwise insert
+   one marked `use_backend … if !{ req_ssl_hello_type 1 }` rule so non-TLS
+   OpenVPN traffic reaches the VPN while every existing SNI route stays intact.
+3. **A conflicting HTTP frontend or an ambiguous multi-bind** — refuse and
+   explain exactly how to proceed.
+
+Every write is backed up, validated with ``haproxy -c``, and restored on
+failure. Removal deletes only the marked blocks/routes this installer added.
 """
 
 from __future__ import annotations
@@ -35,8 +39,21 @@ from core.render import render_haproxy_block
 
 BEGIN_MARKER = "# >>> openvpn-wizard managed block"
 END_MARKER = "# <<< openvpn-wizard managed block <<<"
+ROUTE_BEGIN = "# >>> openvpn-wizard route (v2) >>>"
+ROUTE_END = "# <<< openvpn-wizard route (v2) <<<"
+BACKEND_BEGIN = "# >>> openvpn-wizard backend (v2) >>>"
+BACKEND_END = "# <<< openvpn-wizard backend (v2) <<<"
+
 _BLOCK_RE = re.compile(
-    r"^# >>> openvpn-wizard managed block.*?^# <<< openvpn-wizard managed block <<<\s*$",
+    r"^# >>> openvpn-wizard managed block.*?^# <<< openvpn-wizard managed block <<<[ \t]*\n?",
+    re.MULTILINE | re.DOTALL,
+)
+_ROUTE_RE = re.compile(
+    r"^# >>> openvpn-wizard route \(v2\) >>>.*?^# <<< openvpn-wizard route \(v2\) <<<[ \t]*\n?",
+    re.MULTILINE | re.DOTALL,
+)
+_BACKEND_RE = re.compile(
+    r"^# >>> openvpn-wizard backend \(v2\) >>>.*?^# <<< openvpn-wizard backend \(v2\) <<<[ \t]*\n?",
     re.MULTILINE | re.DOTALL,
 )
 _BIND_RE = re.compile(r"^\s*bind\s+(.+)$", re.IGNORECASE)
@@ -45,9 +62,13 @@ _SECTION_RE = re.compile(
     r"log-forward|program|http-errors|cache|userlist|mailers)\b",
     re.IGNORECASE,
 )
+_DEFAULT_BACKEND_RE = re.compile(r"^\s*default_backend\s+(\S+)", re.IGNORECASE)
+_USE_BACKEND_RE = re.compile(r"^\s*use_backend\s+(\S+)(?:\s+(.*))?$", re.IGNORECASE)
+_MODE_RE = re.compile(r"^\s*mode\s+(tcp|http)\b", re.IGNORECASE)
+_SERVER_RE = re.compile(r"^\s*server\s+\S+\s+([^\s]+)", re.IGNORECASE)
 
 MINIMAL_BASE = """# Minimal HAProxy configuration created by OpenVPN Wizard.
-# Only this file and the managed block below are touched.
+# Only this file and the managed blocks below are touched.
 global
     log /dev/log local0
     maxconn 4096
@@ -66,44 +87,79 @@ defaults
 
 
 @dataclass
+class Section:
+    kind: str
+    name: str
+    start: int
+    end: int
+    body: List[str] = field(default_factory=list)
+
+
+@dataclass
+class FrontendInfo(Section):
+    binds: List[int] = field(default_factory=list)
+    mode: str = "tcp"
+    default_backend: str = ""
+    use_backends: List[Tuple[str, str]] = field(default_factory=list)
+    has_inspect: bool = False
+
+    @property
+    def routes_to_plain_tcp(self) -> bool:
+        for target, condition in self.use_backends:
+            if "req_ssl_hello_type" in condition and "!" in condition:
+                return True
+        return False
+
+
+@dataclass
+class BackendInfo(Section):
+    servers: List[Tuple[str, int]] = field(default_factory=list)
+    mode: str = "tcp"
+
+
+@dataclass
 class ApplyResult:
     changed: bool
     migrated_v1: bool = False
     backup: Optional[str] = None
     reloaded: bool = False
     block_created: bool = False
+    reused_existing: bool = False
+    inserted_route: bool = False
     warnings: List[str] = field(default_factory=list)
 
 
+# ── Pure helpers (unit tested) ──────────────────────────────────────────
+
+
 def strip_managed_block(text: str) -> Tuple[str, bool]:
-    """Remove our marked block, preserving every other byte."""
     match = _BLOCK_RE.search(text)
     if not match:
         return text, False
     cleaned = text[: match.start()] + text[match.end():]
-    # Keep the file tidy without touching other content.
-    cleaned = cleaned.rstrip() + "\n"
-    return cleaned, True
+    return cleaned.rstrip() + "\n", True
 
 
-def _lines_outside_block(text: str):
-    clean, _ = strip_managed_block(text)
-    for number, line in enumerate(clean.splitlines(), 1):
-        yield number, line
+def strip_all_wizard_blocks(text: str) -> Tuple[str, bool]:
+    found = False
+    for pattern in (_BLOCK_RE, _ROUTE_RE, _BACKEND_RE):
+        new_text, changed = pattern.subn("", text)
+        if changed:
+            found = True
+            text = new_text
+    return text.rstrip() + "\n", found
 
 
 def _extract_ports(bind_value: str) -> List[int]:
     ports: List[int] = []
-    # HAProxy allows comma-separated address lists, optional SSL params.
     for token in re.split(r"[\s,]+", bind_value.strip()):
         token = token.strip()
         if not token or token.startswith("#"):
             continue
-        # Strip parameters such as "ssl", "crt", "alpn" and quoted strings.
         if not re.search(r"\d", token):
             continue
         candidate = token.rstrip(",")
-        if candidate.startswith("["):  # [::]:443
+        if candidate.startswith("["):
             match = re.search(r"\]:(\d+)$", candidate)
         else:
             match = re.search(r":(\d+)$", candidate)
@@ -114,34 +170,191 @@ def _extract_ports(bind_value: str) -> List[int]:
     return ports
 
 
+def _lines_outside_block(text: str):
+    clean, _ = strip_managed_block(text)
+    for number, line in enumerate(clean.splitlines(), 1):
+        yield number, line
+
+
 def find_port_conflicts(text: str, port: int) -> List[Tuple[int, str]]:
-    """Return (line_number, line) for binds of ``port`` outside our block."""
     conflicts: List[Tuple[int, str]] = []
-    for number, line in _lines_outside_block(text):
+    clean, _ = strip_managed_block(text)
+    in_managed_route = False
+    for number, line in enumerate(clean.splitlines(), 1):
         stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+        if stripped.startswith(ROUTE_BEGIN) or stripped.startswith(BACKEND_BEGIN):
+            in_managed_route = True
+            continue
+        if stripped.startswith(ROUTE_END) or stripped.startswith(BACKEND_END):
+            in_managed_route = False
+            continue
+        if in_managed_route or not stripped or stripped.startswith("#"):
             continue
         match = _BIND_RE.match(line)
-        if not match:
-            continue
-        if port in _extract_ports(match.group(1)):
+        if match and port in _extract_ports(match.group(1)):
             conflicts.append((number, stripped))
     return conflicts
 
 
 def is_v1_managed(text: str) -> bool:
-    """Detect the exact config shape written by the old v1 installer."""
     markers = ("frontend ovpn_tcp", "backend openvpn_tcp", "frontend https_in")
     return all(marker in text for marker in markers)
 
 
 def merge_managed_block(text: str, block: str) -> Tuple[str, bool]:
-    """Replace our block, or append one. Returns (new_text, created)."""
     if _BLOCK_RE.search(text):
         new_text = _BLOCK_RE.sub(lambda _match: block.rstrip() + "\n", text)
         return new_text, False
     base = text.rstrip() + "\n\n" if text.strip() else ""
     return base + block.rstrip() + "\n", True
+
+
+def parse_config(text: str) -> Tuple[List[FrontendInfo], List[BackendInfo]]:
+    """Parse frontend/backend sections, effective modes and bind ports."""
+    lines = text.splitlines()
+    defaults_mode = "tcp"
+    frontends: List[FrontendInfo] = []
+    backends: List[BackendInfo] = []
+
+    # Find defaults mode first (the last defaults block wins).
+    for line in lines:
+        match = _MODE_RE.match(line)
+        if match:
+            defaults_mode = match.group(1).lower()
+
+    index = 0
+    while index < len(lines):
+        match = _SECTION_RE.match(lines[index])
+        if not match:
+            index += 1
+            continue
+        kind = match.group(1).lower()
+        if kind == "defaults":
+            # Update the effective mode for sections that follow.
+            block = _collect_section(lines, index)
+            for body_line in block.body:
+                mode_match = _MODE_RE.match(body_line)
+                if mode_match:
+                    defaults_mode = mode_match.group(1).lower()
+            index = block.end
+            continue
+        if kind not in {"frontend", "backend", "listen"}:
+            index += 1
+            continue
+        block = _collect_section(lines, index)
+        name = _section_name(lines[index], kind)
+        if kind in {"frontend", "listen"}:
+            fe = FrontendInfo(kind=kind, name=name, start=block.start,
+                              end=block.end, body=block.body, mode=defaults_mode)
+            for body_line in block.body:
+                bind = _BIND_RE.match(body_line)
+                if bind:
+                    fe.binds.extend(_extract_ports(bind.group(1)))
+                mode = _MODE_RE.match(body_line)
+                if mode:
+                    fe.mode = mode.group(1).lower()
+                default = _DEFAULT_BACKEND_RE.match(body_line)
+                if default:
+                    fe.default_backend = default.group(1)
+                use = _USE_BACKEND_RE.match(body_line)
+                if use:
+                    fe.use_backends.append((use.group(1), use.group(2) or ""))
+                if "inspect-delay" in body_line:
+                    fe.has_inspect = True
+            frontends.append(fe)
+        if kind in {"backend", "listen"}:
+            be = BackendInfo(kind=kind, name=name, start=block.start,
+                             end=block.end, body=block.body, mode=defaults_mode)
+            for body_line in block.body:
+                mode = _MODE_RE.match(body_line)
+                if mode:
+                    be.mode = mode.group(1).lower()
+                server = _SERVER_RE.match(body_line)
+                if server:
+                    hostport = server.group(1)
+                    if hostport.startswith("["):
+                        host, _, port_text = hostport.rpartition("]:")
+                        host = host + "]"
+                    else:
+                        host, _, port_text = hostport.rpartition(":")
+                    if port_text.isdigit():
+                        be.servers.append((host, int(port_text)))
+            backends.append(be)
+        index = block.end
+    return frontends, backends
+
+
+def _collect_section(lines: List[str], start: int) -> Section:
+    index = start + 1
+    kind_match = _SECTION_RE.match(lines[start])
+    kind = kind_match.group(1).lower() if kind_match else "other"
+    name = _section_name(lines[start], kind)
+    body: List[str] = []
+    while index < len(lines) and not _SECTION_RE.match(lines[index]):
+        body.append(lines[index])
+        index += 1
+    return Section(kind=kind, name=name, start=start, end=index, body=body)
+
+
+def _section_name(line: str, kind: str) -> str:
+    parts = line.strip().split()
+    return parts[1] if len(parts) > 1 else kind
+
+
+def _backend_reaches_port(backends: List[BackendInfo], name: str, port: int) -> bool:
+    for backend in backends:
+        if backend.name != name:
+            continue
+        for host, server_port in backend.servers:
+            if server_port == port and host in {"127.0.0.1", "localhost", "::1"}:
+                return True
+    return False
+
+
+def _frontend_reuses_openvpn(frontend: FrontendInfo, backends: List[BackendInfo],
+                             port: int) -> bool:
+    candidates = []
+    if frontend.default_backend:
+        candidates.append(frontend.default_backend)
+    candidates.extend(name for name, _ in frontend.use_backends)
+    return any(_backend_reaches_port(backends, name, port) for name in candidates)
+
+
+def _insert_route(text: str, frontend: FrontendInfo, backend_name: str,
+                  need_inspect: bool) -> str:
+    lines = text.splitlines()
+    route = [ROUTE_BEGIN,
+             f"    use_backend {backend_name} if !{{ req_ssl_hello_type 1 }}"]
+    if need_inspect:
+        route[1:1] = [
+            "    tcp-request inspect-delay 2s",
+            "    tcp-request content accept if { req_ssl_hello_type 1 }",
+        ]
+    route.append(ROUTE_END)
+
+    # Insert before default_backend, otherwise at the end of the section.
+    insert_at = None
+    for idx in range(frontend.start + 1, frontend.end):
+        if _DEFAULT_BACKEND_RE.match(lines[idx]):
+            insert_at = idx
+            break
+    if insert_at is None:
+        insert_at = frontend.end
+    lines[insert_at:insert_at] = route
+    return "\n".join(lines) + "\n"
+
+
+def _backend_block(config: InstallConfig, name: str = "ovpn_wizard_openvpn") -> str:
+    port = config.haproxy_backend_port
+    return (
+        f"{BACKEND_BEGIN}\n"
+        f"backend {name}\n"
+        "    mode tcp\n"
+        f"    timeout connect 5s\n"
+        f"    timeout server 1h\n"
+        f"    server openvpn 127.0.0.1:{port}\n"
+        f"{BACKEND_END}\n"
+    )
 
 
 def _run(cmd: List[str], timeout: int = 30) -> subprocess.CompletedProcess:
@@ -161,6 +374,9 @@ def _run(cmd: List[str], timeout: int = 30) -> subprocess.CompletedProcess:
         ) from exc
 
 
+# ── Manager ─────────────────────────────────────────────────────────────
+
+
 class HAProxyManager:
     def __init__(self, config: InstallConfig):
         self.config = config
@@ -168,61 +384,120 @@ class HAProxyManager:
         self.cfg_path = Path(config.haproxy_cfg)
         self.backup_dir = Path(config.backup_dir)
 
-    # ── Public API ───────────────────────────────────────────────────────
-
     def apply(self) -> ApplyResult:
         if not self.config.use_haproxy:
             return ApplyResult(changed=False)
 
         self._check_other_process_on_port()
-
         existing = self.cfg_path.read_text(encoding="utf-8") if self.cfg_path.exists() else ""
-        conflicts = find_port_conflicts(existing, self.config.public_port)
         migrated = False
 
-        if conflicts:
-            if is_v1_managed(existing):
-                self.logger.warning(
-                    "Detected an HAProxy config generated by OpenVPN Wizard v1. "
-                    "It binds port %s twice (which is why it often fails to start). "
-                    "Backing it up and migrating to the v2 managed layout.",
-                    self.config.public_port,
-                )
-                self._backup(existing, suffix="v1-migration")
-                existing = MINIMAL_BASE
-                migrated = True
-            else:
-                details = "\n".join(f"  line {n}: {line}" for n, line in conflicts)
+        # Migrate only the exact v1 layout (which bound 443 twice and could not
+        # be safely edited).
+        if is_v1_managed(existing):
+            self.logger.warning(
+                "Detected the exact OpenVPN Wizard v1 HAProxy layout. Backing it "
+                "up and migrating to the additive v2 layout."
+            )
+            self._backup(existing, suffix="v1-migration")
+            existing = MINIMAL_BASE
+            migrated = True
+
+        if not existing.strip():
+            existing = MINIMAL_BASE
+
+        frontends, backends = parse_config(existing)
+        on_port = [f for f in frontends if self.config.public_port in f.binds]
+
+        changed = False
+        backup = None
+        reused = False
+        inserted = False
+
+        if len(on_port) > 1:
+            details = ", ".join(f.name for f in on_port)
+            raise HAProxyConflictError(
+                f"Multiple HAProxy frontends bind port {self.config.public_port} "
+                f"({details}); refusing to guess which one owns the traffic.",
+                fix_hint=(
+                    "Nothing was changed. Choose a different --port, or remove "
+                    "the duplicate frontend manually, then re-run."
+                ),
+            )
+
+        if len(on_port) == 1:
+            frontend = on_port[0]
+            if frontend.mode == "http":
                 raise HAProxyConflictError(
-                    "The existing HAProxy configuration already binds port "
-                    f"{self.config.public_port}. Refusing to break it:\n{details}",
+                    f"HAProxy frontend '{frontend.name}' binds port "
+                    f"{self.config.public_port} in HTTP mode. Raw OpenVPN TCP "
+                    "cannot pass through an HTTP frontend.",
                     fix_hint=(
-                        "Paths forward (nothing was changed):\n"
-                        f"  1. Re-run with --port <free-port> (e.g. 8443)\n"
-                        "  2. Remove/rename the conflicting frontend yourself, then re-run\n"
-                        "  3. Use UDP with --proto udp (UDP does not use HAProxy)\n"
-                        "Tip: 'sudo ss -ltnp | grep :%d' shows the owner." % self.config.public_port
+                        "Nothing was changed. Use a different --port, or change "
+                        "that frontend to 'mode tcp' yourself."
                     ),
                 )
+            if _frontend_reuses_openvpn(frontend, backends,
+                                        self.config.haproxy_backend_port):
+                self.logger.info(
+                    "HAProxy frontend '%s' already routes port %s to OpenVPN "
+                    "127.0.0.1:%s; leaving HAProxy unchanged.",
+                    frontend.name, self.config.public_port,
+                    self.config.haproxy_backend_port,
+                )
+                reused = True
+            else:
+                backend_name = "ovpn_wizard_openvpn"
+                existing_backend = next(
+                    (b for b in backends if b.name == backend_name), None
+                )
+                if existing_backend is not None and not (
+                    existing_backend.mode == "tcp"
+                    and _backend_reaches_port(
+                        [existing_backend], backend_name,
+                        self.config.haproxy_backend_port,
+                    )
+                ):
+                    backend_name = (
+                        f"ovpn_wizard_openvpn_{self.config.haproxy_backend_port}"
+                    )
+                    existing_backend = next(
+                        (b for b in backends if b.name == backend_name), None
+                    )
+                text = existing
+                if existing_backend is None:
+                    text = text.rstrip() + "\n\n" + _backend_block(
+                        self.config, backend_name
+                    )
+                need_inspect = not frontend.has_inspect
+                text = _insert_route(text, frontend, backend_name, need_inspect)
+                existing = text
+                changed = True
+                inserted = True
+        else:
+            # No existing listener on this port: append the standalone block.
+            block = render_haproxy_block(self.config)
+            new_text, created = merge_managed_block(existing, block)
+            if new_text != existing:
+                existing = new_text
+                changed = True
+            if not created and not changed:
+                self.logger.info("HAProxy managed block is already up to date")
+                return ApplyResult(changed=False, reloaded=self._is_active())
 
-        block = render_haproxy_block(self.config)
-        new_text, created = merge_managed_block(
-            existing if existing.strip() else MINIMAL_BASE, block
+        if not changed:
+            return ApplyResult(changed=False, reloaded=self._is_active(),
+                               reused_existing=reused)
+
+        backup = self._backup(
+            self.cfg_path.read_text(encoding="utf-8") if self.cfg_path.exists() else "",
+            suffix="pre-apply",
         )
-        if new_text == existing and not created:
-            self.logger.info("HAProxy managed block is already up to date")
-            return ApplyResult(changed=False, reloaded=self._is_active())
-
-        backup = None
-        if self.cfg_path.exists():
-            backup = self._backup(existing, suffix="pre-apply")
-
-        self._write_atomic(new_text)
+        self._write_atomic(existing)
         problems = self._validate()
         if problems:
             if backup:
                 shutil.copy2(backup, self.cfg_path)
-                self.logger.error("Restored previous HAProxy config after failed validation")
             else:
                 self.cfg_path.unlink(missing_ok=True)
             raise HAProxyConflictError(
@@ -237,23 +512,50 @@ class HAProxyManager:
 
         reloaded = self._reload_or_restore(backup)
         self.logger.info(
-            "HAProxy: %s managed block at %s (backup: %s)",
-            "added" if created else "updated", self.cfg_path, backup or "none",
+            "HAProxy: %s at %s (backup: %s)",
+            "inserted an additive VPN route" if inserted else "updated the VPN block",
+            self.cfg_path, backup or "none",
         )
         return ApplyResult(
-            changed=True,
-            migrated_v1=migrated,
-            backup=str(backup) if backup else None,
-            reloaded=reloaded,
-            block_created=created,
+            changed=True, migrated_v1=migrated,
+            backup=str(backup) if backup else None, reloaded=reloaded,
+            block_created=not inserted and changed, reused_existing=reused,
+            inserted_route=inserted,
         )
 
+
+    def describe(self) -> dict:
+        """Read-only description of what apply() would do."""
+        if not self.config.use_haproxy:
+            return {"action": "none", "reason": "HAProxy not used"}
+        if not self.cfg_path.exists():
+            return {"action": "append", "reason": "no existing HAProxy config"}
+        existing = self.cfg_path.read_text(encoding="utf-8")
+        frontends, backends = parse_config(existing)
+        on_port = [f for f in frontends if self.config.public_port in f.binds]
+        if len(on_port) > 1:
+            return {"action": "conflict", "reason": "multiple frontends bind the port",
+                    "frontends": [f.name for f in on_port]}
+        if not on_port:
+            return {"action": "append", "reason": "no listener on the target port"}
+        frontend = on_port[0]
+        if frontend.mode == "http":
+            return {"action": "conflict", "reason": "target frontend is HTTP mode",
+                    "frontend": frontend.name}
+        if _frontend_reuses_openvpn(frontend, backends,
+                                    self.config.haproxy_backend_port):
+            return {"action": "reuse", "reason": "existing route already points to OpenVPN",
+                    "frontend": frontend.name,
+                    "backend_port": self.config.haproxy_backend_port}
+        return {"action": "insert", "reason": "add one non-TLS route to the existing frontend",
+                "frontend": frontend.name,
+                "backend_port": self.config.haproxy_backend_port}
+
     def remove(self) -> bool:
-        """Remove only our managed block. Returns True if anything changed."""
         if not self.cfg_path.exists():
             return False
         text = self.cfg_path.read_text(encoding="utf-8")
-        clean, found = strip_managed_block(text)
+        clean, found = strip_all_wizard_blocks(text)
         if not found:
             return False
         backup = self._backup(text, suffix="pre-remove")
@@ -263,26 +565,22 @@ class HAProxyManager:
             if backup:
                 shutil.copy2(backup, self.cfg_path)
             raise HAProxyConflictError(
-                "Removing the VPN block left an invalid HAProxy config; restored it.\n"
+                "Removing the VPN blocks left an invalid HAProxy config; restored it.\n"
                 + problems
             )
         self._reload_or_restore(backup)
-        self.logger.info("Removed the OpenVPN Wizard block from %s", self.cfg_path)
+        self.logger.info("Removed only OpenVPN Wizard blocks from %s", self.cfg_path)
         return True
 
     # ── Internals ────────────────────────────────────────────────────────
 
     def _check_other_process_on_port(self) -> None:
-        """Warn/fail if a non-HAProxy process already owns the public port."""
         try:
             result = _run(["ss", "-ltnpH", f"sport = :{self.config.public_port}"])
         except SystemError:
             return
         output = (result.stdout or "").strip()
-        if not output:
-            return
-        if "haproxy" in output:
-            # Existing HAProxy binds are handled by the config merge logic.
+        if not output or "haproxy" in output:
             return
         raise PortConflictError(
             self.config.public_port,

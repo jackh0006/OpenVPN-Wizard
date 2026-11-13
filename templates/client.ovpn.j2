@@ -1,4 +1,4 @@
-# OpenVPN Wizard v2 - client profile
+# OpenVPN Wizard v2.1 - client profile
 # Profile: {{ profile_name }}
 # Endpoint: {{ config.remote_host }}:{{ config.public_port }}/{{ config.vpn_proto }}
 # Authentication: {{ "certificate + username/password" if config.auth_mode == "userpass" else "certificate only" }}
@@ -17,14 +17,15 @@ nobind
 persist-key
 persist-tun
 remote-cert-tls server
-verify-x509-name server name
-data-ciphers AES-256-GCM:CHACHA20-POLY1305:AES-128-GCM
-data-ciphers-fallback AES-256-GCM
-auth SHA256
-cipher AES-256-GCM
-tls-version-min 1.2
-tls-ciphersuites TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256
-tls-cipher TLS-ECDHE-ECDSA-WITH-AES-256-GCM-SHA384:TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384:TLS-ECDHE-ECDSA-WITH-CHACHA20-POLY1305-SHA256:TLS-ECDHE-RSA-WITH-CHACHA20-POLY1305-SHA256
+verify-x509-name {{ config.server_cert_cn }} name
+cipher {{ config.cipher }}
+data-ciphers {{ config.data_ciphers }}
+data-ciphers-fallback {{ config.cipher }}
+auth {{ config.auth_digest }}
+tls-version-min {{ config.tls_min }}
+{% if config.tls_max %}tls-version-max {{ config.tls_max }}
+{% endif %}tls-ciphersuites {{ config.tls_ciphersuites }}
+tls-cipher {{ config.tls_cipher }}
 {% if config.access_mode == "locked" %}
 # Locked profile: never accept server routes or DNS, only reach the VPN subnet.
 route-nopull
@@ -37,13 +38,14 @@ auth-user-pass
 {% endif %}
 {% if config.vpn_proto == "tcp" %}
 tcp-nodelay
-mssfix 1360
+explicit-exit-notify 0
 {% else %}
 explicit-exit-notify 2
-mssfix 1420
 {% endif %}
-sndbuf 0
-rcvbuf 0
+tun-mtu {{ config.tun_mtu }}
+mssfix {{ config.mssfix }}
+sndbuf {{ config.sndbuf }}
+rcvbuf {{ config.rcvbuf }}
 reneg-sec 3600
 verb 3
 mute 20

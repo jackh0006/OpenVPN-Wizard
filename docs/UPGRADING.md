@@ -19,7 +19,7 @@ of that.
 | Password hashing | `crypt` (removed in Python 3.13) | PBKDF2-HMAC-SHA256 |
 | IPv6 | disabled system-wide | left alone; clients told to block it |
 | CRL | empty placeholder in some paths | real generated CRL, verified |
-| Cipher policy | TLS 1.3 only | TLS 1.2+ with TLS 1.3 when available |
+| Cipher policy | TLS 1.3 only | TLS 1.3 default; 1.2 optional with `--tls-min 1.2` |
 
 ## Before upgrading
 
@@ -55,6 +55,27 @@ The installer:
 * detects the exact v1 HAProxy layout and migrates it to the append-only
   layout (the backup path is printed);
 * creates new standard `tls-crypt` profiles for the users you configure.
+
+## v2.1 live detection
+
+v2.1 reads the existing `/etc/openvpn/server.conf` before writing anything and
+reuses:
+
+- the loopback port (for example `11944`),
+- `cipher`, `data-ciphers`, `auth`, TLS minimum/maximum and cipher suites,
+- MTU, MSS, send/receive buffers,
+- `verify-client-cert` and `duplicate-cn`,
+- the server certificate CN (including `CN=ChangeMe`),
+- the existing PKI at `/root/easy-rsa/pki` and its `ta.key`.
+
+On a multi-purpose HAProxy config, it also detects that an existing TCP
+frontend already routes to the VPN (for example `default_backend bk_ovpn` →
+`127.0.0.1:11944`) and leaves HAProxy untouched. If the frontend exists but
+does not route to the VPN, it inserts one marked non-TLS `use_backend` rule and
+one backend block instead of adding a conflicting second frontend.
+
+Run `sudo vpn-installer plan` first: it prints the HAProxy action (`reuse`,
+`insert`, `append`) and writes a proposed config without applying it.
 
 ## After upgrading
 

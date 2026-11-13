@@ -10,6 +10,7 @@ The step is idempotent and non-destructive:
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -46,6 +47,13 @@ class PKIStep(BaseStep):
                 output_callback(msg)
             self.logger.info(msg)
 
+        cert_names = [u.safe_cert_name for u in config.users]
+        if len(cert_names) != len(set(cert_names)):
+            raise PKIError(
+                "Two users map to the same certificate name; each user must "
+                "have a different key. Give every profile a different username."
+            )
+
         config.pki_dir = str(self._select_pki_dir(config, log))
         pki = Path(config.pki_dir)
         easyrsa = self._find_easyrsa()
@@ -61,14 +69,21 @@ class PKIStep(BaseStep):
             log("Building CA (ECDSA P-384, 10 year validity)...")
             self._easyrsa(easyrsa, config, ["--batch", "build-ca", "nopass"])
 
-        # Server certificate (reuse when it already has CN=server).
+        # Server certificate (reuse it exactly, including its CN).
         server_crt = pki / "issued" / "server.crt"
         if not server_crt.exists():
             log("Issuing server certificate (CN=server)...")
             self._easyrsa(easyrsa, config, ["--batch", "build-server-full", "server", "nopass"])
+            config.server_cert_cn = "server"
         else:
-            self._assert_cn(server_crt, "server")
-            log("Reusing existing server certificate")
+            cn = self._cert_cn(server_crt)
+            if not cn:
+                raise PKIError(
+                    f"Could not read the server certificate CN from {server_crt}",
+                    fix_hint="Check that the certificate is valid PEM.",
+                )
+            config.server_cert_cn = cn
+            log(f"Reusing existing server certificate (CN={cn})")
 
         # RSA CAs (including a v1 PKI) need DH parameters; ECDSA does not.
         key_algo = self._run_cmd(
@@ -76,7 +91,7 @@ class PKIStep(BaseStep):
             check=False,
         ).stdout
         if "Public Key Algorithm: rsaEncryption" in key_algo:
-            config.dh = "/etc/openvpn/dh.pem"
+            config.dh = str(Path(config.openvpn_dir) / "dh.pem")
             log("RSA server certificate detected; DH parameters will be used")
         else:
             config.dh = "none"
@@ -108,6 +123,8 @@ class PKIStep(BaseStep):
 
         ta_key = pki / "ta.key"
         if not ta_key.exists():
+            self._adopt_ta_key(pki)
+        if not ta_key.exists():
             log("Generating TLS-crypt (v1) static key...")
             self._generate_ta_key(ta_key)
         else:
@@ -130,7 +147,11 @@ class PKIStep(BaseStep):
 
     def _select_pki_dir(self, config: InstallConfig, log) -> Path:
         """Prefer the configured location, then an existing v1 Django-style PKI."""
-        candidates = [Path(config.pki_dir), Path("/etc/openvpn/easy-rsa/pki")]
+        candidates = [
+            Path(config.pki_dir),
+            Path("/etc/openvpn/easy-rsa/pki"),
+            Path("/root/easy-rsa/pki"),
+        ]
         for candidate in candidates:
             if (candidate / "ca.crt").exists() and (candidate / "private" / "ca.key").exists():
                 if candidate != Path(config.pki_dir):
@@ -233,20 +254,30 @@ set_var EASYRSA_NS_COMMENT      "OpenVPN Wizard Certificate"
         ]
         vars_file.write_text("\n".join(lines) + "\n")
 
-    def _assert_cn(self, cert: Path, expected: str) -> None:
+    def _cert_cn(self, cert: Path) -> str:
         result = self._run_cmd(
             ["openssl", "x509", "-in", str(cert), "-noout", "-subject"],
             check=False,
         )
-        if expected not in result.stdout:
-            raise PKIError(
-                f"Existing server certificate does not have CN={expected}: "
-                f"{result.stdout.strip()}",
-                fix_hint=(
-                    "Move /etc/openvpn/pki aside (do not delete) and re-run to "
-                    "create a fresh CA, or issue a server certificate with CN=server."
-                ),
-            )
+        match = re.search(r"CN\s*=\s*([^,/]+)", result.stdout)
+        return match.group(1).strip() if match else ""
+
+    def _adopt_ta_key(self, pki: Path) -> None:
+        """Reuse an existing tls-crypt key so old profiles keep working."""
+        candidates = [
+            Path("/etc/openvpn/keys/ta.key"),
+            Path("/etc/openvpn/ta.key"),
+            Path("/root/easy-rsa/ta.key"),
+        ]
+        for candidate in candidates:
+            if candidate.exists() and candidate.stat().st_size > 100:
+                shutil.copy2(candidate, pki / "ta.key")
+                try:
+                    os.chmod(pki / "ta.key", 0o600)
+                except OSError:
+                    pass
+                self.logger.info("Adopted existing TLS-crypt key from %s", candidate)
+                return
 
     def _generate_ta_key(self, path: Path) -> None:
         for cmd in (["openvpn", "--genkey", "secret", str(path)],

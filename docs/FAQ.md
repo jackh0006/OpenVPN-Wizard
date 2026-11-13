@@ -50,14 +50,17 @@ certificates/profiles/DB in place.
 
 ### Will it overwrite my existing HAProxy config?
 
-No. It appends one marked block, validates the result, and restores the
-previous file if validation or reload fails. It refuses to touch a port that
-another frontend already owns.
+No. If the target port has no listener, it appends one marked block. If an
+existing TCP frontend already owns the port, it reuses a compatible VPN
+backend, or inserts one marked non-TLS route. It validates with `haproxy -c`
+and restores the previous file on failure. It refuses ambiguous or HTTP-mode
+frontends instead of guessing.
 
 ### Will it disable IPv6 or reset my firewall?
 
-No. It never disables IPv6, never runs `ufw reset`, and never flushes iptables.
-Free profiles push `block-ipv6` to clients instead.
+IPv6 is disabled by default (matching the tested reference VPS) because the
+tunnel is IPv4-only; you can keep it enabled with `--enable-ipv6`. It never
+runs `ufw reset` and never flushes iptables.
 
 ### Does it work on ARM?
 

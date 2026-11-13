@@ -141,7 +141,9 @@ def build_plan(config: InstallConfig, output_dir: Path) -> dict:
     (pki / "crl.pem").write_bytes(crl.public_bytes(serialization.Encoding.PEM))
     os.chmod(pki / "crl.pem", 0o644)
 
-    # Point the plan config at the dry-run directory.
+    # Point the plan config at the dry-run directory. The throwaway server
+    # certificate is always CN=server, so client pinning must match it.
+    config.server_cert_cn = "server"
     config.pki_dir = str(pki)
     config.openvpn_dir = str(openvpn)
     config.profiles_dir = str(clients)
@@ -167,10 +169,27 @@ def build_plan(config: InstallConfig, output_dir: Path) -> dict:
     problems = validate_rendered_server(server_conf, config)
 
     profiles = ProfileGenerator(config).save_all(clients)
-    haproxy_block = render_haproxy_block(config) if config.use_haproxy else ""
-    if haproxy_block:
-        (output_dir / "haproxy-block.cfg").write_text(haproxy_block)
-        os.chmod(output_dir / "haproxy-block.cfg", 0o644)
+    haproxy_block = ""
+    haproxy_strategy = {}
+    if config.use_haproxy:
+        try:
+            from utils.haproxy import HAProxyManager
+            haproxy_strategy = HAProxyManager(config).describe()
+        except Exception as exc:
+            haproxy_strategy = {"action": "unknown", "reason": str(exc)}
+        (output_dir / "haproxy-strategy.txt").write_text(
+            "\n".join(f"{key}: {value}" for key, value in haproxy_strategy.items()) + "\n"
+        )
+        if haproxy_strategy.get("action") in {"append", "insert"}:
+            haproxy_block = render_haproxy_block(config)
+            (output_dir / "haproxy-block.cfg").write_text(haproxy_block)
+            os.chmod(output_dir / "haproxy-block.cfg", 0o644)
+        else:
+            (output_dir / "haproxy-block.cfg").write_text(
+                "# No HAProxy change is required.\n"
+                f"# Action: {haproxy_strategy.get('action')}\n"
+                f"# Reason: {haproxy_strategy.get('reason')}\n"
+            )
 
     readme = _readme(config, output_dir)
     (output_dir / "README.txt").write_text(readme)
@@ -180,6 +199,7 @@ def build_plan(config: InstallConfig, output_dir: Path) -> dict:
         "server_conf": str(output_dir / "server.conf"),
         "profiles": [str(p) for p in profiles],
         "haproxy_block": str(output_dir / "haproxy-block.cfg") if haproxy_block else "",
+        "haproxy_strategy": haproxy_strategy,
         "problems": problems,
     }
 

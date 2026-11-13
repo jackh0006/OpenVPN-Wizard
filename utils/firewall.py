@@ -113,10 +113,20 @@ class FirewallManager:
     def _configure_sysctl(self, actions: dict) -> None:
         lines = [
             SYSCTL_MARKER,
-            "# Only VPN-related knobs. IPv6 is deliberately left enabled.",
+            "# VPN-related knobs. IPv6 is controlled by the explicit wizard choice.",
             "net.ipv4.ip_forward = 1",
             "net.core.default_qdisc = fq",
         ]
+        if self.config.ipv6_enabled:
+            lines.extend([
+                "net.ipv6.conf.all.disable_ipv6 = 0",
+                "net.ipv6.conf.default.disable_ipv6 = 0",
+            ])
+        else:
+            lines.extend([
+                "net.ipv6.conf.all.disable_ipv6 = 1",
+                "net.ipv6.conf.default.disable_ipv6 = 1",
+            ])
         # Enable BBR only when the kernel module is actually available.
         try:
             modprobe = _run(["modprobe", "tcp_bbr"])

@@ -1,4 +1,4 @@
-# OpenVPN Wizard v2
+# OpenVPN Wizard v2.1
 
 Hardened, **non-destructive** OpenVPN deployment for Ubuntu/Debian VPS.
 
@@ -8,6 +8,8 @@ and how many users — then builds one unique `.ovpn` per user and applies only
 the changes it owns.
 
 [![CI](https://github.com/jackh0006/OpenVPN-Wizard/actions/workflows/ci.yml/badge.svg)](https://github.com/jackh0006/OpenVPN-Wizard/actions/workflows/ci.yml)
+**New to VPNs?** Start with the plain-English [Beginner Guide](docs/BEGINNER-GUIDE.md). It explains every question and every command without assuming prior knowledge.
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Ubuntu 22.04+](https://img.shields.io/badge/Ubuntu-22.04%2B-orange.svg)](https://ubuntu.com/)
@@ -53,8 +55,14 @@ deploying.
 | Transport | **TCP** or **UDP** | TCP can share 443 via HAProxy; UDP binds directly |
 | Authentication | **certificate + password** or **certificate only** | Every user always gets a unique key |
 | Access | **free** (full tunnel) or **locked** (VPN network only) | Locked adds no NAT/exit-node risk |
+| IPv6 | **disable** (recommended) or **keep enabled** | Disabling prevents IPv6 leaks; it does not affect IPv4 |
 | Profile prefix | e.g. `MHH06` | Used for the `.ovpn` filenames |
 | Number of profiles | 1–50 | Each gets a separate cert, key and password |
+
+Advanced users can also set `--tun-mtu`, `--mssfix`, `--sndbuf`, `--rcvbuf`,
+`--auth-digest`, `--tls-min`, `--tls-max`, `--internal-port`,
+`--verify-client-cert` and `--duplicate-cn`. The defaults match the tested
+reference VPS: MTU 1400, MSS 1360, 512 KiB socket buffers, SHA384, TLS 1.3.
 
 It also asks whether to attach the VPN to HAProxy (TCP only) and offers the
 optional VLESS/Reality multiplexing path.
@@ -108,7 +116,7 @@ Run `vpn-installer install --help` for the complete option list.
 
 ```
 Data channel:  AES-256-GCM, CHACHA20-POLY1305, AES-128-GCM (AEAD)
-Control:       TLS 1.2 minimum, TLS 1.3 supported
+Control:       TLS 1.3 (1.2 available with --tls-min 1.2)
 Control auth:  tls-crypt v1 (hides and authenticates the control channel)
 Certificates:  ECDSA P-384, unique per user
 Server pinning: verify-x509-name server name + remote-cert-tls server
@@ -116,11 +124,11 @@ Compression:   disabled (avoids VORACLE-style compression oracles)
 CRL:           checked on every connection; revoking a user takes effect immediately
 ```
 
-`tls-version-min 1.2` is deliberate. TLS-1.3-only profiles fail on some older
-OpenVPN Connect builds; 1.2 with TLS 1.3 negotiated when available is the
-compatible, standard choice. `tls-crypt` (v1) is used instead of
-`tls-crypt-v2` because it is supported by every current OpenVPN client,
-including OpenVPN Connect on Android/iOS.
+The defaults (`TLS 1.3`, `SHA384`, MTU 1400, MSS 1360, 512 KiB buffers) match
+the tested reference VPS. If you need older client compatibility, run with
+`--tls-min 1.2`. `tls-crypt` (v1) is used instead of `tls-crypt-v2` because it
+is supported by every current OpenVPN client, including OpenVPN Connect on
+Android/iOS.
 
 ---
 
@@ -199,7 +207,7 @@ This is the part most installers get wrong. v2 **never rewrites** your
        bind *:443
        ...
    backend ovpn_wizard_openvpn
-       server openvpn 127.0.0.1:1194
+       server openvpn 127.0.0.1:<internal-port>
    # <<< openvpn-wizard managed block <<<
    ```
 4. runs `haproxy -c -f …` before reloading;
@@ -221,7 +229,7 @@ port yourself.
 * Opens only the VPN public port (`tcp` or `udp`) and preserves existing rules.
 * Adds NAT/forwarding **only in free mode**. Locked mode deliberately adds no
   NAT, so the VPS cannot be used as an internet exit node.
-* Never runs `ufw reset`, never flushes iptables, never disables IPv6.
+* Never runs `ufw reset` and never flushes iptables. IPv6 is disabled only when you choose that option.
 * Writes `/etc/sysctl.d/99-openvpn-wizard.conf`; enables BBR only when the
   kernel module is actually available.
 * Persists rules with `netfilter-persistent` when present, otherwise with
@@ -255,6 +263,15 @@ private keys or plaintext passwords.
 
 ---
 
+## Live verification
+
+v2.1 was checked read-only against a working Ubuntu 22.04 VPS running OpenVPN
+on `127.0.0.1:11944` behind an existing HAProxy frontend on `*:443`. The
+planner detected the existing `bk_ovpn` route and reported `action: reuse`; applying the manager to a copy of the live config returned the
+same SHA-256, so HAProxy was untouched. A profile generated from the existing
+PKI completed a TLS 1.3 handshake and certificate verification (`CN=ChangeMe`)
+against the live server. Details: [docs/LIVE-VERIFICATION.md](docs/LIVE-VERIFICATION.md).
+
 ## Honest security notes
 
 * Traffic between client and VPS is encrypted and authenticated with modern
@@ -268,9 +285,9 @@ private keys or plaintext passwords.
   trust.
 * TCP inside TCP can reduce throughput on lossy links. Use UDP if speed
   matters and the network allows it.
-* IPv6 is not disabled on the host (that would break unrelated services).
-  Free-tunnel profiles push `block-ipv6` to clients; verify on your device if
-  IPv6 leaks matter to you.
+* IPv6 is **disabled by default** (matching the reference VPS) and clients are
+  told to block it. Use `--enable-ipv6` if you need host IPv6; the tunnel itself
+  is IPv4-only, so judge whether that is appropriate for your network.
 * Treat `.ovpn` files as private keys. Use `scp`/the one-time token server,
   never email or chat. Revoke and rotate if one leaks.
 
@@ -296,8 +313,10 @@ neither. Before upgrading:
 2. Run `sudo vpn-installer install` (v2). If it detects the exact v1 HAProxy
    layout, it backs it up and migrates to the append-only layout — the backup
    path is printed.
-3. Existing v1 PKI at `/etc/openvpn/pki` or `/etc/openvpn/easy-rsa/pki` is
-   reused when healthy, so current profiles keep working.
+3. Existing PKI at `/etc/openvpn/pki`, `/etc/openvpn/easy-rsa/pki` or
+   `/root/easy-rsa/pki` is reused when healthy, so current profiles keep
+   working. The existing TLS-crypt key, certificate CN, port, ciphers, TLS
+   version, MTU and socket buffers are detected and preserved automatically.
 4. Re-download profiles for the new users. v1 tls-crypt-v2 clients are
    converted to standard `tls-crypt` only for newly generated profiles; do not
    delete the old `.ovpn` files until the new ones are tested.
@@ -321,6 +340,23 @@ matching, verifies HAProxy merge idempotency, and asks the real `openvpn`
 binary to parse every generated configuration when it is installed.
 
 ---
+
+## Donations
+
+Optional crypto donations are welcome. The same public addresses are used in
+the author's other repositories. Full details and network warnings:
+**[DONATIONS.md](DONATIONS.md)**.
+
+| Asset | Address |
+|---|---|
+| Bitcoin (BTC) | `bc1q8t0fn2yrsy4lh3m0pz34uj27t8vxjeavkjym83` |
+| Ethereum / BNB / USDT-USDC EVM | `0xdad428900a4359be8f76b3062df34211582e09eb` |
+| TRON / USDT TRC-20 | `TMpb6RNTuGNM1eTakm9kjds1mRTPYYJesf` |
+| Solana / USDT-USDC SPL | `BDCCrRez1yD1RpkAtiqKKDk3BfxPD8P7nkL26jCYrzgL` |
+| Litecoin (LTC) | `ltc1q2gs89cfy3mumr7gu9w0zl9rllf80q67m5rmma8` |
+
+> Use the exact address from [DONATIONS.md](DONATIONS.md). Never send on the
+> wrong network; crypto transfers are irreversible.
 
 ## License
 

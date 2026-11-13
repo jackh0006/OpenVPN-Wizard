@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vpn-installer"
-version = "2.0.0"
+version = "2.1.0"
 description = "OpenVPN Wizard - hardened, non-destructive OpenVPN with optional HAProxy multiplexing"
 readme = "README.md"
 license = {text = "MIT"}

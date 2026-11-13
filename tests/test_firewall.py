@@ -115,5 +115,13 @@ def test_sysctl_uses_only_our_file(tmp_path, fake_firewall, monkeypatch):
     actions = firewall.FirewallManager(config).apply()
     content = firewall.SYSCTL_PATH.read_text()
     assert "net.ipv4.ip_forward = 1" in content
-    assert "disable_ipv6" not in content
+    assert "net.ipv6.conf.all.disable_ipv6 = 1" in content
     assert str(firewall.SYSCTL_PATH) in actions["sysctl"]
+
+
+def test_ipv6_can_be_enabled(tmp_path, fake_firewall, monkeypatch):
+    monkeypatch.setattr(firewall.FirewallManager, "_persist", lambda self, actions: None)
+    config = _config(tmp_path, ipv6_enabled=True)
+    firewall.FirewallManager(config).apply()
+    content = firewall.SYSCTL_PATH.read_text()
+    assert "net.ipv6.conf.all.disable_ipv6 = 0" in content
