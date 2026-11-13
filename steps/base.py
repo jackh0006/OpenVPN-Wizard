@@ -11,8 +11,8 @@ from typing import Optional, Callable, Dict, Any, List
 from dataclasses import dataclass
 
 from core.config import InstallConfig
-from core.logger import StepLogger, get_logger, log_command, log_output
-from core.exceptions import SystemError, ConfigError, ServiceError
+from core.logger import get_logger, log_command, log_output
+from core.exceptions import SystemError, ConfigError
 
 
 @dataclass
@@ -242,7 +242,8 @@ class BaseStep(ABC):
         """Render a Jinja2 template."""
         try:
             from jinja2 import Environment, FileSystemLoader
-            env = Environment(loader=FileSystemLoader(Path(template_path).parent))
+            # Plain-text configuration templates, not HTML.
+            env = Environment(loader=FileSystemLoader(Path(template_path).parent))  # nosec B701
             template = env.get_template(Path(template_path).name)
             return template.render(**context)
         except Exception as e:

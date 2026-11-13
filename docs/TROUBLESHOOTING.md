@@ -1,184 +1,204 @@
-# OpenVPN Wizard - Troubleshooting Guide
+# Troubleshooting
 
-## Common Issues and Solutions
+Start with the built-in checks:
 
-### Installation Issues
-
-#### "Permission denied" when running installer
-**Solution:** Run with `sudo`:
 ```bash
-sudo vpn-installer install
+sudo vpn-installer doctor
+sudo vpn-installer validate
 ```
 
-#### "Port 443 already in use"
-**Solution:** Stop the conflicting service:
+The full log is at `/var/log/vpn-installer/install.log` (mode 600, rotated).
+
+---
+
+## The installer refuses to continue: port already in use
+
+It prints the line number and the owning process. Nothing was changed.
+
 ```bash
-sudo systemctl stop nginx apache2
-sudo vpn-installer install
+sudo ss -ltnp | grep ':443'
 ```
 
-#### Package installation fails
-**Solution:** Update package lists first:
+Options:
+
+1. Choose another port: `sudo vpn-installer install --port 8443`.
+2. Free the port yourself (stop the unrelated service) and re-run.
+3. Use UDP, which does not use HAProxy: `--proto udp`.
+
+The installer never kills another service.
+
+---
+
+## HAProxy test fails
+
 ```bash
-sudo apt-get update
-sudo vpn-installer install
+sudo haproxy -c -f /etc/haproxy/haproxy.cfg
+sudo journalctl -u haproxy -n 100 --no-pager
 ```
 
-#### 3X-UI database not found
-**Solution:** The 3X-UI installer needs to run first to create the database. The installer handles this automatically.
+A timestamped copy of the previous config is in
+`/var/backups/vpn-installer/`. The installer restores it automatically when
+its own change fails validation, so a broken pre-existing config stays your
+responsibility to fix.
 
-### Connection Issues
+Remove only the VPN block with:
 
-#### Can't connect to VPN
-**Checklist:**
-1. Is port 443 open on your VPS firewall?
-2. Is HAProxy running? `sudo systemctl status haproxy`
-3. Is OpenVPN running? `sudo systemctl status openvpn@server`
-4. Is your .ovpn profile correct?
-5. Are your domain DNS records pointing to your VPS IP?
-
-**Test:**
 ```bash
-# Check if port 443 is reachable
-telnet YOUR_VPS_IP 443
-
-# Check HAProxy status
-sudo systemctl status haproxy
-
-# Check OpenVPN status
-sudo systemctl status openvpn@server
+sudo vpn-installer uninstall
 ```
 
-#### Slow connection speeds
-**Possible causes:**
-1. VPS location far from you
-2. Server overloaded
-3. Encryption overhead
-4. ISP throttling
+---
 
-**Solutions:**
-1. Choose a VPS closer to your location
-2. Try VLESS-TLS protocol instead of OpenVPN
-3. Check server resource usage: `top` or `htop`
-4. Contact your ISP
+## OpenVPN does not start
 
-#### DNS leaks
-**Check:**
-1. Visit https://dnsleaktest.com/
-2. If it shows your ISP's DNS, you have a leak
-
-**Fix:**
-The installer configures `block-outside-dns` and pushes DNS 1.1.1.1 / 8.8.8.8. If you still leak:
 ```bash
-# Check OpenVPN config
-grep "dhcp-option" /etc/openvpn/server.conf
-# Should show: push "dhcp-option DNS 1.1.1.1" and push "dhcp-option DNS 8.8.8.8"
+sudo systemctl status openvpn@server --no-pager -l
+sudo journalctl -u openvpn@server -n 100 --no-pager
 ```
 
-#### IPv6 leaks
-**Check:**
-1. Visit https://test-ipv6.com/
-2. If it shows IPv6 connectivity, you may leak
+Common causes:
 
-**Fix:**
-The installer disables IPv6 via sysctl. Verify:
+| Log message | Fix |
+|---|---|
+| `Cannot open TUN/TAP dev` | The VPS kernel must provide `/dev/net/tun`. Ask the provider to enable TUN/TAP. |
+| `error loading certificate` / `key mismatch` | `sudo vpn-installer manage` → rotate/export the affected profile. |
+| `CRL: cannot open` | Re-run the installer; the CRL is regenerated in the PKI step. |
+| `Address already in use` | Another process owns the port. `sudo ss -ltnp`. |
+| `AUTH_FAILED` | The password is wrong or the PAM account is missing. `sudo vpn-installer manage` → change password. |
+| `TLS Error: TLS key negotiation failed` | Usually a wrong profile/server mismatch or a network middlebox. Verify the endpoint and port. |
+
+The installer keeps a timestamped backup at
+`/var/backups/vpn-installer/openvpn-server.conf.<time>` and restores it if the
+new config fails to start.
+
+---
+
+## Connected, but no internet (free mode)
+
 ```bash
-cat /proc/sys/net/ipv6/conf/all/disable_ipv6
-# Should return: 1
+# On the VPS
+sysctl net.ipv4.ip_forward
+sudo iptables -t nat -S POSTROUTING | grep MASQUERADE
+sudo iptables -S FORWARD | grep tun0
 ```
 
-### Service Issues
+The public interface detection can be checked with:
 
-#### HAProxy won't start
-**Diagnosis:**
 ```bash
-sudo systemctl status haproxy
-sudo journalctl -u haproxy -n 50
-haproxy -c -f /etc/haproxy/haproxy.cfg
+ip route show default
 ```
 
-**Common fixes:**
-- Invalid config syntax → Check /etc/haproxy/haproxy.cfg
-- Port already in use → Stop conflicting service
-- Permission issues → Check file permissions
+If the interface is not the one used in the NAT rule, re-run the installer
+with the correct interface auto-detected, or re-run the firewall step. Do not
+flush existing rules.
 
-#### OpenVPN won't start
-**Diagnosis:**
+On the client, check the profile is **free**, not **locked**:
+
 ```bash
-sudo systemctl status openvpn@server
-sudo journalctl -u openvpn@server -n 50
-openvpn --config /etc/openvpn/server.conf --verb 4 --dry-run
+grep -E 'route-nopull|redirect-gateway' PROFILE.ovpn
 ```
 
-**Common fixes:**
-- Missing certificates → Re-run PKI step
-- Invalid config → Check /etc/openvpn/server.conf
-- TUN device missing → `sudo modprobe tun`
+---
 
-#### 3X-UI won't start
-**Diagnosis:**
-```bash
-sudo systemctl status x-ui
-sudo journalctl -u x-ui -n 50
+## Locked mode still reaches the internet
+
+Locked profiles contain:
+
+```
+route-nopull
+route 10.8.0.0 255.255.255.0
+pull-filter ignore "redirect-gateway"
+pull-filter ignore "dhcp-option"
 ```
 
-**Common fixes:**
-- Database missing → Re-run X-UI step
-- Port conflict → Check ports 10000, 10004, 443
+If those lines are missing, the profile is from a free-mode install. Re-export
+the profile after changing the access mode.
 
-### Profile Issues
+---
 
-#### .ovpn file won't import
-**Check:**
-1. File has all required sections: `<ca>`, `<cert>`, `<key>`, `<tls-crypt>`
-2. File is not corrupted
-3. Server IP in file matches your VPS IP
+## DNS leaks (free mode)
 
-**Fix:**
-Regenerate the profile:
+Free profiles push `9.9.9.9` and `149.112.112.112`. On Android, OpenVPN
+Connect applies pushed DNS. On desktop Linux with `systemd-resolved`, verify:
+
 ```bash
-sudo vpn-installer manage
-# → 5 (Export Profile)
-# → Select your user
+resolvectl status tun0
 ```
 
-#### Connected but no internet
-**Check:**
-1. IPv4 forwarding enabled: `cat /proc/sys/net/ipv4/ip_forward` (should be 1)
-2. NAT rules: `iptables -t nat -L POSTROUTING -n -v`
-3. Default gateway set correctly
+If your client ignores pushed DNS, configure DNS manually or use a client
+that honors `dhcp-option`.
 
-**Fix:**
+---
+
+## IPv6 leaks
+
+v2 does **not** disable IPv6 on the host. Free profiles push `block-ipv6`; if
+your client ignores it, disable IPv6 on that device or use a profile with
+`--access locked` and route only what you need.
+
+---
+
+## Cannot download the profile
+
 ```bash
-sudo sysctl -w net.ipv4.ip_forward=1
-sudo iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o YOUR_INTERFACE -j MASQUERADE
+sudo ls -l /etc/openvpn/clients/
+sudo vpn-installer download
 ```
 
-## Getting Help
+From your device:
 
-### Before Opening an Issue
+```bash
+scp root@SERVER:/etc/openvpn/clients/NAME.ovpn ~/Downloads/
+```
 
-1. Run the validation checklist:
-   ```bash
-   sudo vpn-installer validate
-   ```
-2. Check the logs:
-   ```bash
-   sudo journalctl -u haproxy -n 50
-   sudo journalctl -u openvpn@server -n 50
-   sudo journalctl -u x-ui -n 50
-   ```
-3. Search existing GitHub issues
+If SSH is not available, use the one-time HTTPS server:
 
-### Opening a GitHub Issue
+```bash
+sudo vpn-installer download NAME --serve
+```
 
-Include:
-- Your Ubuntu version
-- Your architecture (AMD64/ARM64)
-- What you were trying to do
-- What happened (error messages)
-- What you expected to happen
-- Steps to reproduce
+If the one-time server cannot bind, choose another port with `--port`.
 
-**Email:** jackh109867@gmail.com
-**GitHub:** https://github.com/jackh0006/OpenVPN-Wizard/issues
+---
+
+## Certificate revoked, but the user still connects
+
+The CRL is copied to `/etc/openvpn/crl.pem` and OpenVPN is reloaded. Check:
+
+```bash
+openssl crl -in /etc/openvpn/crl.pem -noout -text | head
+sudo systemctl reload-or-restart openvpn@server
+```
+
+Existing sessions may survive until they reconnect; the next TLS
+renegotiation rejects the revoked certificate.
+
+---
+
+## Lost the credentials file
+
+It is at `/root/openvpn-wizard-credentials.txt` (mode 600). The database stores
+only hashes, so a lost password cannot be recovered — set a new one:
+
+```bash
+sudo vpn-installer manage   # Change password
+```
+
+---
+
+## Upgrade problems
+
+See `docs/UPGRADING.md`. In short: keep backups, run `vpn-installer plan`
+first, then install. The old HAProxy file is backed up before any migration.
+
+---
+
+## Collecting a bug report
+
+```bash
+sudo vpn-installer doctor > /tmp/doctor.txt 2>&1
+sudo journalctl -u openvpn@server -n 200 --no-pager > /tmp/openvpn.txt
+sudo journalctl -u haproxy -n 200 --no-pager > /tmp/haproxy.txt
+```
+
+Redact public IPs and any profile contents before posting publicly.

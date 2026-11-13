@@ -2,14 +2,11 @@
 Welcome Screen - Hero screen with philosophy and credits.
 """
 
-import asyncio
 from rich.console import Console
 from rich.panel import Panel
 from rich.align import Align
-from rich.columns import Columns
-from rich.text import Text
 
-from ui.theme import get_console, LOGO, SMALL_LOGO, COLORS
+from ui.theme import get_console, LOGO
 from ui.components import InfoBox, CreditsFooter
 
 
@@ -51,16 +48,16 @@ class WelcomeScreen:
         features = InfoBox(
             "info",
             "What This Installs",
-            "A stealthy, multiplexed VPN stack on a single port (443)",
+            "A hardened OpenVPN stack that asks exactly what you need",
             [
-                "🎯 HAProxy - Single public listener on port 443",
-                "🔐 OpenVPN - TLS-crypt v1, AES-256-GCM, TLS 1.3 only (no SNI)",
-                "🌐 VLESS-TLS + xhttp - 2 domains with realistic paths",
-                "🕵️ VLESS-Reality - Mimics Cloudflare, indistinguishable from HTTPS",
-                "👤 PAM authentication - System users, secure passwords",
-                "🔑 Easy-RSA PKI - RSA-4096 certs, per-client certificates",
-                "📦 SQLite user database - Add/remove/rename users anytime",
-                "🧱 Hardened kernel & firewall - IPv4 only, NAT, no leaks",
+                "🔐 OpenVPN - AES-256-GCM, TLS 1.2+, tls-crypt",
+                "🔑 Easy-RSA PKI - ECDSA P-384, one unique key per user",
+                "👤 Certificate + password, or certificate-only",
+                "🌐 TCP or UDP, domain or IP, any port",
+                "🔓 Free full tunnel, or locked private-network-only",
+                "🎯 HAProxy - optional, append-only, never rewrites your config",
+                "🧱 Firewall - only the required rules; IPv6 untouched",
+                "📦 SQLite metadata - PBKDF2 hashes only, never private keys",
             ]
         )
         self.console.print(features.render())
@@ -68,12 +65,12 @@ class WelcomeScreen:
         # Architecture diagram
         arch = Panel(
             Align.center(
-                "[bold]Client[/bold] → [primary]:443[/primary] → [bold]HAProxy[/bold] (SNI Router)\n\n"
-                "    ├─ No SNI → [success]OpenVPN[/success] (127.0.0.1:1194)\n"
-                "    ├─ your-domain1.com → [info]VLESS-TLS[/info] (127.0.0.1:10000)\n"
-                "    ├─ your-domain2.com → [info]VLESS-TLS[/info] (127.0.0.1:10004)\n"
-                "    └─ popular-site.com → [warning]VLESS-Reality[/warning] (127.0.0.1:443)\n\n"
-                "[dim]Only HAProxy binds to public 0.0.0.0:443. Everything else → 127.0.0.1[/dim]"
+                "[bold]Client[/bold] → [primary]TCP/443[/primary] → [bold]HAProxy[/bold] (optional)\n\n"
+                "    ├─ no TLS ClientHello → [success]OpenVPN[/success] (127.0.0.1:1194)\n"
+                "    ├─ known SNI → [info]optional VLESS/Reality[/info] (loopback)\n"
+                "    └─ anything else → [success]OpenVPN[/success]\n\n"
+                "[dim]UDP binds directly. HAProxy gets one marked, reversible block;\n"
+                "your existing configuration is never replaced.[/dim]"
             ),
             title="[primary]🏗️ Architecture[/primary]",
             border_style="primary",

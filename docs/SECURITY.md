@@ -1,247 +1,102 @@
-# OpenVPN Wizard - Security Model
+# Security model (v2)
 
-## Threat Model
+This document describes what OpenVPN Wizard actually does, and what it does
+not claim.
 
-### Adversaries
-| Adversary | Capabilities | Goal |
-|-----------|--------------|------|
-| **ISP/Government** | Full packet capture, DPI, flow analysis, active probing | Block/identify VPN traffic |
-| **Network Admin** | Port blocking, protocol inspection, certificate inspection | Prevent VPN usage |
-| **Active Attacker** | MITM, certificate spoofing, replay, injection | Intercept/modify traffic |
-| **Quantum Computer** | Shor's algorithm, Grover's algorithm | Break asymmetric crypto |
+## Threat model
 
-### Assets Protected
-- User identity and location
-- Traffic content and metadata
-- DNS queries
-- Connection timestamps and patterns
+| Adversary | Capability | What v2 does |
+|---|---|---|
+| ISP / network DPI | Passive capture, protocol fingerprints, blocking | Encrypts and authenticates the tunnel; TCP/443 is indistinguishable at the port level; `tls-crypt` hides the control channel. Does **not** guarantee evasion of an active DPI system that blocks unknown protocols. |
+| Local network | MITM, captive portals | Server certificate pinning (`verify-x509-name server name` + `remote-cert-tls server`) prevents silent MITM. |
+| Stolen profile | Possession of one `.ovpn` | That one certificate can be revoked without touching other users; CRL is enforced on every connect. |
+| VPS provider | Host-level access | Can observe metadata and terminate traffic. Choose a provider you trust. |
+| Other VPN users | Same server | No `client-to-client`; each user is isolated unless you add it deliberately. |
 
----
+## Cryptography
 
-## Cryptographic Design
-
-### Control Channel (TLS 1.3 + tls-crypt-v2)
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        TLS 1.3 Handshake                        │
-├─────────────────────────────────────────────────────────────────┤
-│  Key Exchange:   ECDHE (secp384r1)                             │
-│  Authentication: ECDSA (secp384r1)                             │
-│  Cipher Suite: TLS_AES_256_GCM_SHA384                          │
-│  Cipher Suite: TLS_CHACHA20_POLY1305_SHA256                    │
-│  Cipher Suite: TLS_AES_128_GCM_SHA256                          │
-├─────────────────────────────────────────────────────────────────┤
-│  tls-crypt-v2 (Post-Quantum Resistant Control Channel)         │
-│  ├─ Key Derivation: HKDF-SHA256                                │
-│  ├─ Encryption:   AES-256-CTR + HMAC-SHA256                    │
-│  ├─ Replay Protection: 64-bit sequence numbers                 │
-│  └─ Forward Secrecy: Per-session keys via ECDHE                │
-└─────────────────────────────────────────────────────────────────┘
+Control channel   TLS 1.2 minimum (1.3 negotiated when available)
+                  TLS_AES_256_GCM_SHA384
+                  TLS_CHACHA20_POLY1305_SHA256
+                  TLS_AES_128_GCM_SHA256
+                  tls-crypt v1 (authenticated, encrypted control channel)
+Data channel      AES-256-GCM, CHACHA20-POLY1305, AES-128-GCM
+                  data-ciphers-fallback AES-256-GCM
+Certificates      ECDSA P-384 (secp384r1), CA 10 years, leaf 825 days
+CRL               regenerated on every revocation, enforced by OpenVPN
+Compression       disabled (no comp-lzo / compress; avoids compression oracles)
 ```
 
-### Data Channel
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Data Channel                             │
-├─────────────────────────────────────────────────────────────────┤
-│  Cipher: AES-256-GCM (Hardware accelerated on modern CPUs)    │
-│  Fallback: CHACHA20-POLY1305 (When AES-NI unavailable)        │
-│  Key Derivation: TLS-PRF (from control channel)               │
-│  Peer ID: 0 (tls-crypt-v2 mode)                                │
-│  IV: 64-bit counter (implicit)                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+### Why ECDSA P-384?
 
-### Certificate Hierarchy
-```
-Root CA (ECDSA/secp384r1)
-├── Validity: 10 years
-├── Key Usage: Certificate Sign, CRL Sign
-└── Extended Key Usage: None (CA only)
+It is fast on low-power VPS instances, avoids slow DH parameter generation
+(`dh none`), and is supported by every current OpenVPN client. A legacy RSA
+PKI is detected and reused; in that case the installer generates and uses a
+real `dh.pem`.
 
-Server Cert (ECDSA/secp384r1)
-├── Validity: 825 days (Let's Encrypt compatible)
-├── Key Usage: Digital Signature, Key Encipherment
-├── Extended Key Usage: TLS Web Server Authentication
-└── Subject: CN=server
+### Why `tls-crypt` and not `tls-crypt-v2`?
 
-Client Cert (ECDSA/secp384r1)
-├── Validity: 825 days
-├── Key Usage: Digital Signature
-├── Extended Key Usage: TLS Web Client Authentication
-└── Subject: CN=<client-name>
+`tls-crypt` is supported by OpenVPN Connect on Android/iOS, OpenVPN GUI,
+Tunnelblick and the openvpn CLI. `tls-crypt-v2` is stronger in some deployment
+models but is not universally supported; choosing it would break the “works
+on a normal phone” requirement. Profiles are single-user, so the v2 key
+distribution advantage is not needed.
 
-CRL
-├── Validity: 6 months
-├── Algorithm: ECDSA-SHA256
-└── Updated on every revocation
-```
+### Why TLS 1.2 minimum?
 
-### Why secp384r1?
-| Curve | Classical Security | Quantum Security | Performance |
-|-------|-------------------|------------------|-------------|
-| secp256r1 | 128-bit | 64-bit | Fastest |
-| secp384r1 | 192-bit | 96-bit | Fast |
-| secp521r1 | 256-bit | 128-bit | Slower |
+Some current OpenVPN Connect builds still fail with `tls-version-min 1.3`.
+TLS 1.3 is offered and used when both ends support it. This is the standard,
+compatible configuration.
 
-**secp384r1** chosen for 192-bit classical security with good performance margin.
+## Authentication modes
 
----
+### Certificate + password (recommended)
 
-## DPI Evasion
+OpenVPN requires **both** a valid client certificate and a PAM password. The
+certificate is unique per user; the PAM account has `/usr/sbin/nologin` and is
+never usable for SSH. Revoking either the certificate or the account blocks
+the user.
 
-### Traffic Classification Resistance
+### Certificate only
 
-| Technique | Implementation | Effectiveness |
-|-----------|----------------|---------------|
-| **Port 443** | Standard HTTPS port | Bypasses port blocks |
-| **HAProxy SNI** | Real TLS termination for other services | Blends with HTTPS |
-| **tls-crypt-v2** | Encrypts control channel headers | No OpenVPN fingerprint |
-| **TCP over TLS** | Raw TCP looks like HTTPS | Defeats protocol inspection |
-| **No compression** | Removes VORACLE side-channel | No length oracle |
+OpenVPN requires a valid client certificate; no password prompt. Useful for
+devices where typing a password is impractical. The profile is then a bearer
+credential: treat it like a private key, and rotate it if lost.
 
-### Active Probing Resistance
-```
-Active Probe          │ Response
-──────────────────────┼─────────────────────────────────────────
-TLS ClientHello       │ Valid TLS 1.3 ServerHello with cert
-HTTP GET /            │ 404 or redirect (via Caddy)
-OpenVPN plaintext     │ TCP RST (no listener on raw port)
-SSH banner            │ No response (port filtered)
-```
+## Access modes
 
----
+* **Free** — pushes `redirect-gateway`, DNS servers and `block-ipv6`; the VPS
+  NATs client traffic. This makes the VPS the internet exit.
+* **Locked** — no `redirect-gateway`, no DNS push, no NAT. The client uses
+  `route-nopull`, a route only to the VPN subnet, and ignores pushed DNS. The
+  VPS cannot be used as an exit node.
 
-## Leak Prevention
+## File permissions
 
-### IPv6 Leak Prevention
-```openvpn
-push "block-ipv6"
-```
-- Client OS disables IPv6 on tunnel interface
-- No IPv6 routes pushed
-- No IPv6 DNS servers pushed
+| Path | Mode | Notes |
+|---|---|---|
+| `/etc/openvpn/pki/private/` | 700 | CA and client private keys |
+| `/etc/openvpn/pki/private/*.key` | 600 | |
+| `/etc/openvpn/server.conf` | 600 | |
+| `/etc/openvpn/clients/` | 700 | |
+| `/etc/openvpn/clients/*.ovpn` | 600 | Contains a private key |
+| `/root/openvpn-wizard-credentials.txt` | 600 | Delete after distribution |
+| `/etc/openvpn/users.db` | 600 | PBKDF2 hashes only |
+| `/var/log/vpn-installer/install.log` | 600 | Credentials are redacted |
 
-### DNS Leak Prevention
-```openvpn
-push "block-outside-dns"
-push "dhcp-option DNS 1.1.1.1"
-push "dhcp-option DNS 1.0.0.1"
-push "dhcp-option DNS 8.8.8.8"
-```
-- Windows: Uses DNS API to block non-tunnel DNS
-- Linux/macOS: resolvconf updates /etc/resolv.conf
-- Android: Uses VpnService DNS override
+## Logging and privacy
 
-### WebRTC Leak Prevention
-Not prevented at VPN level. Mitigation:
-- Browser: `media.peerconnection.enabled = false`
-- Extension: uBlock Origin / WebRTC Control
+* The installer has no telemetry and makes no analytics calls.
+* The only outbound calls are package downloads, optional public-IP detection,
+  and (only if you explicitly enable VLESS with a domain) Let's Encrypt.
+* Passwords are passed to `chpasswd` over stdin, never via argv or a shell
+  string. Log lines matching password patterns are redacted.
 
-### Traffic Fingerprinting
-| Vector | Mitigation |
-|--------|------------|
-| Packet timing | TLS record padding (tls-crypt-v2) |
-| Packet size | MTU 1500, fixed record sizes |
-| Flow duration | Keepalive 10/60 masks idle patterns |
-| Byte counts | AES-GCM constant-size records |
+## What v2 deliberately does not do
 
----
-
-## Forward Secrecy
-
-### Session Keys
-```
-Master Secret (from TLS handshake)
-    │
-    ├── Control Channel Keys (tls-crypt-v2)
-    │   ├── Encryption Key (AES-256-CTR)
-    │   ├── HMAC Key (SHA256)
-    │   └── Replay Protection (64-bit counter)
-    │
-    └── Data Channel Keys
-        ├── Client → Server (AES-256-GCM)
-        └── Server → Client (AES-256-GCM)
-```
-
-**Key Properties:**
-- ECDHE provides forward secrecy
-- tls-crypt-v2 keys derived per-session
-- No key reuse across sessions
-- `reneg-sec 0` prevents key rotation (prevents rollback attacks)
-
----
-
-## Post-Quantum Considerations
-
-### Current State
-| Algorithm | Quantum Risk | Mitigation |
-|-----------|--------------|------------|
-| ECDSA/secp384r1 | Broken by Shor's | None (classical only) |
-| ECDHE/secp384r1 | Broken by Shor's | Ephemeral keys limit exposure |
-| AES-256-GCM | Grover's (128-bit) | 256-bit key = 128-bit post-Q |
-| SHA256 | Grover's (128-bit) | 256-bit = 128-bit post-Q |
-| tls-crypt-v2 AES-256-CTR | Grover's (128-bit) | 256-bit key = 128-bit post-Q |
-
-### Future Migration Path
-1. **Hybrid KEM**: Add ML-KEM-768 (Kyber) alongside ECDHE
-2. **Hybrid Signatures**: Add ML-DSA-65 (Dilithium) alongside ECDSA
-3. **OpenVPN 2.7+**: Supports post-quantum KEMs natively
-
----
-
-## Compliance
-
-### Standards Alignment
-| Standard | Alignment |
-|----------|-----------|
-| NIST SP 800-52r2 | TLS 1.3 only, approved ciphers |
-| NIST SP 800-57 | secp384r1 ≥ 192-bit security |
-| RFC 9325 | TLS 1.3, no compression, secure ciphers |
-| RFC 9147 | tls-crypt-v2 spec compliance |
-| GDPR Art. 32 | Encryption, pseudonymization |
-
-### Audit Checklist
-- [ ] TLS 1.3 only (no TLS 1.2 fallback)
-- [ ] Certificate validation (CA, SAN, EKU, expiry)
-- [ ] tls-crypt-v2 enabled
-- [ ] No compression
-- [ ] No renegotiation
-- [ ] IPv6 blocked
-- [ ] DNS forced
-- [ ] IPv6 blocked on client
-- [ ] DNS leaks tested
-- [ ] WebRTC blocked in browser
-
----
-
-## Incident Response
-
-### Compromise Indicators
-| Indicator | Detection | Response |
-|-----------|-----------|----------|
-| Unknown client in status | `ovpn-list-clients` | Revoke immediately |
-| Certificate in CRL | `openssl crl -in crl.pem -text` | Investigate |
-| Unusual traffic patterns | HAProxy stats, conntrack | Block IP, rotate certs |
-| TLS handshake failures | HAProxy logs | Check cert validity |
-
-### Key Rotation
-```bash
-# Rotate server cert (annually)
-cd /etc/openvpn/easy-rsa
-./easyrsa --batch renew server
-./easyrsa --batch build-server-full server nopass
-systemctl reload openvpn-server@server
-
-# Rotate CA (every 10 years)
-./easyrsa --batch build-ca nopass
-# Requires full PKI rebuild
-```
-
----
-
-## Security Contacts
-
-- **Security Issues**: security@openvpn-wizard.example.com
-- **PGP Key**: Available on GitHub releases
-- **Disclosure Policy**: 90-day coordinated disclosure
+* It does not disable IPv6 system-wide.
+* It does not flush, reset or disable the firewall.
+* It does not overwrite unrelated HAProxy sections.
+* It does not serve profiles over HTTP.
+* It does not claim to defeat every DPI system.

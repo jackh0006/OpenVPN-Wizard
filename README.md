@@ -1,249 +1,328 @@
-# OpenVPN Wizard
+# OpenVPN Wizard v2
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Ubuntu 22.04+](https://img.shields.io/badge/Ubuntu-22.04+-orange.svg)](https://ubuntu.com/)
-[![AMD64 & ARM64](https://img.shields.io/badge/Arch-AMD64%20%7C%20ARM64-green.svg)](https://wiki.ubuntu.com/)
+Hardened, **non-destructive** OpenVPN deployment for Ubuntu/Debian VPS.
 
-## 🎯 OpenVPN Wizard
+It asks exactly what it needs — server IP, domain or IP, TCP or UDP, port,
+certificate+password or certificate-only, locked or free access, profile names
+and how many users — then builds one unique `.ovpn` per user and applies only
+the changes it owns.
 
-The world's easiest, safest, and most secure VPN installer for Linux Ubuntu VPS.
-
-Deploy a stealthy, multiplexed VPN stack on port 443 in minutes — no networking degree required. We teach you everything as we go, with clear explanations and beautiful visuals.
-
-🔒 **Maximum Security** • 🕵️ **Maximum Stealth** • 🎓 **Zero Experience Needed**  
-📱 **Works on AMD64 & ARM64** • 🆓 **100% Open Source** • 🚫 **No Tracking**
+[![CI](https://github.com/jackh0006/OpenVPN-Wizard/actions/workflows/ci.yml/badge.svg)](https://github.com/jackh0006/OpenVPN-Wizard/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Ubuntu 22.04+](https://img.shields.io/badge/Ubuntu-22.04%2B-orange.svg)](https://ubuntu.com/)
 
 ---
 
-## 📖 What Is This?
-
-Imagine you want to send a secret letter to your friend, but you don't want anyone — not the mailman, not the school, not anyone — to know what's inside the letter or who you're sending it to.
-
-Normally, the mailman (your internet company) can see the address on the envelope. The school (websites you visit) can see where the letter came from.
-
-OpenVPN Wizard puts your letter inside a **magic steel box**. Then it puts that box inside **another box** that looks like a regular pizza delivery box. The mailman sees a pizza delivery — nothing suspicious. Your friend opens both boxes and reads your letter. Nobody in between knows what's inside.
-
-That's what this installer does. It makes your internet traffic look like normal web browsing while actually being your secret VPN.
-
----
-
-## ✨ What Exactly Does This Do?
-
-| What It Does | How It Helps You |
-|-------------|------------------|
-| 🎯 Installs on your Ubuntu VPS | You own your VPN — no monthly subscription |
-| 🌐 Runs on port 443 (HTTPS) | Looks like normal websites to everyone |
-| 🔐 Uses TLS 1.3 + AES-256-GCM | Bank-grade encryption |
-| 🕵️ Hides from ISP, DPI, firewalls | They can't tell you're using VPN |
-| 👥 Lets you add/remove users | Share with family, friends, team |
-| 📱 Works on phone & computer | Any device can connect |
-| 📚 Teaches you as you go | No prior knowledge needed |
-| 🆓 Completely free & open source | No hidden costs, no tracking |
-
----
-
-## 🤔 Why You Need This
-
-| Without OpenVPN Wizard | With OpenVPN Wizard |
-|----------------------|-------------------|
-| Your ISP sees every website you visit | Your ISP sees only encrypted connection to your VPS |
-| Websites see your real IP address | Websites see only your VPS IP |
-| Firewalls can block VPN traffic | Traffic looks like normal HTTPS browsing |
-| You pay monthly for VPN service | You own the server, no subscription |
-| Complex setup takes hours | Setup takes minutes with guided UI |
-| No control over your data | You control everything |
-| VPN providers can log your activity | No logs, no tracking, no phone-home |
-
----
-
-## 📊 Comparison Table
-
-| Feature | OpenVPN Wizard | Commercial VPN | Other Installers |
-|---------|---------------|----------------|------------------|
-| **Cost** | Free (you own VPS) | $5-15/month | Usually free |
-| **Open Source** | ✅ Yes | ❌ No | Sometimes |
-| **No Tracking** | ✅ Yes | ❌ They log you | Varies |
-| **Stealth Mode** | ✅ Port 443 + SNI | ❌ Detectable | Rarely |
-| **Multi-Protocol** | ✅ OpenVPN + VLESS + Reality | ❌ One protocol | Rarely |
-| **User Management** | ✅ Built-in | ❌ Account-based | Rarely |
-| **Privacy Education** | ✅ Teach-as-you-go | ❌ None | Rarely |
-| **AMD64 + ARM64** | ✅ Both | ✅ Both | Varies |
-| **Rollback Support** | ✅ Every step | ❌ None | Rarely |
-| **Validation Checks** | ✅ 11 automated tests | ❌ None | Rarely |
-| **QR Code Setup** | ✅ Mobile-friendly | ✅ App-based | Rarely |
-
----
-
-## 🏗️ How It Works (Simple Version)
-
-```
-You (Phone/Laptop)
-     ↓  Port 443 (looks like regular website)
-HAProxy (The Traffic Cop - only thing on public internet)
-     ↓  Decides where to send based on website name (SNI)
-┌─────────────────────────────────────────────┐
-│  No website name → OpenVPN (your secret VPN) │
-│  your-domain1.com → VLESS-TLS (fast proxy)   │
-│  your-domain2.com → VLESS-TLS (fast proxy)   │
-│  popular-site.com → VLESS-Reality (stealth)  │
-└─────────────────────────────────────────────┘
-     ↓  Everything talks to 127.0.0.1 (private, not public)
-```
-
----
-
-## 🔍 What Each Entity Sees (And Doesn't See)
-
-### 🏠 Your Internet Provider (ISP)
-
-| ✅ SEES | ❌ DOESN'T SEE |
-|---------|---------------|
-| Encrypted connection to your VPS on port 443 | What websites you visit |
-| How much data you use | Your DNS queries |
-| When you connect | The actual content of your traffic |
-| That you use port 443 (normal HTTPS) | That you're using a VPN |
-
-### 🎯 Deep Packet Inspection (Firewalls, Censorship)
-
-| ✅ SEES | ❌ DOESN'T SEE |
-|---------|---------------|
-| Standard TLS 1.3 handshake | OpenVPN protocol signatures |
-| Packet sizes and timing | VLESS/Reality protocol fingerprints |
-| Certificate exchange | Any application data (fully encrypted) |
-
-### 🌐 Websites You Visit
-
-| ✅ SEES | ❌ DOESN'T SEE |
-|---------|---------------|
-| Your VPS IP address | Your real home IP address |
-| Standard browser headers | Your ISP or location |
-| Normal TLS connection | That traffic is tunneled |
-
-### 🖥️ Your VPS Provider (Hosting Company)
-
-| ✅ SEES | ❌ DOESN'T SEE |
-|---------|---------------|
-| Encrypted traffic on port 443 | Your decrypted traffic content |
-| Resource usage (CPU, RAM) | Your browsing history |
-| Disk space used | Your passwords or keys |
-
----
-
-## 🖥️ Supported Platforms
-
-| Architecture | Ubuntu 22.04 | Ubuntu 24.04 | Other Ubuntu |
-|-------------|-------------|-------------|-------------|
-| **AMD64** (Intel/AMD 64-bit) | ✅ Fully Tested | ✅ Fully Tested | ✅ Supported |
-| **ARM64** (Raspberry Pi, AWS Graviton, Apple Silicon) | ✅ Fully Tested | ✅ Fully Tested | ✅ Supported |
-| **ARM32** (32-bit ARM) | ⚠️ Community Tested | ⚠️ Community Tested | ⚠️ Supported |
-| **i386** (32-bit Intel) | ⚠️ Community Tested | ⚠️ Community Tested | ⚠️ Supported |
-
----
-
-## 🚀 Quick Start (30 Seconds)
+## Quick start
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/jackh0006/OpenVPN-Wizard.git
-cd OpenVPN-Wizard
-
-# 2. Run the quick installer
-chmod +x quick_install.sh
-sudo ./quick_install.sh
-
-# 3. Run the wizard
-sudo vpn-installer install
+curl -fsSL https://raw.githubusercontent.com/jackh0006/OpenVPN-Wizard/main/install.sh | sudo bash
 ```
 
----
+or from a clone:
 
-## 📋 Complete Step-by-Step Guide
+```bash
+git clone https://github.com/jackh0006/OpenVPN-Wizard.git
+cd OpenVPN-Wizard
+sudo bash install.sh
+```
 
-### Step 1: Welcome
-The wizard greets you with a beautiful screen explaining what we do and why privacy matters. No technical jargon.
+You can inspect everything first, without root or system changes:
 
-### Step 2: Privacy Education
-We show you exactly what your ISP, firewalls, websites, and VPS provider can and cannot see — using simple tables and analogies.
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e .
+vpn-installer plan --output ./vpn-plan --profiles 3
+```
 
-### Step 3: Configuration
-We ask you for:
-- Your VPS IP address
-- Admin username and password (for the control panel)
-- VPN username and password (for connecting)
-- Three domain names you own (for routing different types of traffic)
-
-We validate everything in real-time and explain why each field matters.
-
-### Step 4: Review Each Step
-Before we do anything, we show you:
-- What this step does
-- Why it's needed
-- What files will change
-- How to undo it if something goes wrong
-- How long it takes
-
-You confirm each step before we proceed.
-
-### Step 5: Installation
-Watch the progress bar with live logs. You can pause, cancel, or rollback at any time.
-
-### Step 6: Success
-You get your .ovpn profile file, a QR code for mobile setup, and instructions on how to connect.
-
-### Step 7: Manage Users
-Add, remove, rename, or change passwords for VPN users anytime.
+That writes a complete `server.conf`, one client profile per user, and the
+exact HAProxy block into `./vpn-plan/`. It creates a throwaway PKI for the
+plan only. `vpn-installer plan` is the safe way to check the result before
+deploying.
 
 ---
 
-## 🔐 Security Standards
+## What the wizard asks
 
-| Component | Standard | Implementation |
-|-----------|----------|---------------|
-| Encryption | AES-256-GCM | Military-grade |
-| Authentication | SHA384 | Strong integrity |
-| TLS Version | TLS 1.3 only | Modern, secure |
-| TLS Ciphers | TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256 | Best available |
-| TLS-Crypt | v1 (pre-shared key) | Extra obfuscation |
-| Certificates | RSA-4096 | Very strong |
-| DH Parameters | 2048-bit FFDHE | Forward secrecy |
-| Reality | X25519 + Short IDs | Undetectable |
-| Passwords | SHA-512 crypt | System standard |
-| File Permissions | 600 (owner only) | Keys protected |
+| Question | Choices | Notes |
+|---|---|---|
+| Server public IP | IPv4 | Auto-detected, always confirmed |
+| Clients connect via | domain **or** IP | Domain is recommended if you want TLS/Reality later |
+| Public port | 1–65535 | 443 blends in with HTTPS |
+| Transport | **TCP** or **UDP** | TCP can share 443 via HAProxy; UDP binds directly |
+| Authentication | **certificate + password** or **certificate only** | Every user always gets a unique key |
+| Access | **free** (full tunnel) or **locked** (VPN network only) | Locked adds no NAT/exit-node risk |
+| Profile prefix | e.g. `MHH06` | Used for the `.ovpn` filenames |
+| Number of profiles | 1–50 | Each gets a separate cert, key and password |
+
+It also asks whether to attach the VPN to HAProxy (TCP only) and offers the
+optional VLESS/Reality multiplexing path.
+
+### Non-interactive example
+
+```bash
+sudo vpn-installer install --non-interactive \
+  --server-ip 203.0.113.10 \
+  --domain vpn.example.com \
+  --port 443 --proto tcp \
+  --auth userpass --access free \
+  --prefix MHH06 --profiles 3
+```
+
+Profiles are named `MHH06-01`, `MHH06-02`, `MHH06-03`, with unique usernames,
+certificates and generated passwords. Passwords are printed in the wizard and
+written to `/root/openvpn-wizard-credentials.txt` (mode 600).
+
+Other useful invocations:
+
+```bash
+# UDP, certificate-only, private-network-only
+sudo vpn-installer install -n --server-ip 203.0.113.10 --proto udp \
+  --auth cert --access locked --profiles 2
+
+# Bind directly to 443 without HAProxy
+sudo vpn-installer install -n --server-ip 203.0.113.10 --no-haproxy
+
+# Custom profile names
+sudo vpn-installer install -n --server-ip 203.0.113.10 \
+  --users MHH06-Phone,MHH06-Laptop,Tablet
+```
+
+Run `vpn-installer install --help` for the complete option list.
 
 ---
 
-## 📜 Policies
+## What gets installed
 
-### Privacy Policy
-- **No tracking:** We never phone home, never send data anywhere
-- **No telemetry:** Zero analytics, zero usage reporting
-- **No accounts:** No email required, no registration
-- **Your data stays on your server:** Nothing leaves your VPS
-- **Open source:** You can inspect every line of code
+| Component | Purpose | Public listener? |
+|---|---|---|
+| OpenVPN | Encrypted tunnel, AEAD ciphers, `tls-crypt`, per-user certificates, CRL | Only behind HAProxy or when UDP/direct |
+| HAProxy | Optional TCP port sharing (OpenVPN + TLS SNI routing) | Yes, if enabled |
+| Easy-RSA | ECDSA P-384 CA, server cert, unique client certs, CRL | No |
+| iptables/UFW | Only the specific allow/NAT rules required | — |
+| 3X-UI | Optional VLESS/Reality multiplexing (advanced) | Loopback only |
+| SQLite | User metadata and PBKDF2 password hashes | No |
 
-### Security Policy
-- **Responsible disclosure:** Report security issues to jackh109867@gmail.com
-- **No backdoors:** We promise there are no hidden access points
-- **Regular updates:** Security patches released promptly
-- **Key protection:** Private keys stored with 600 permissions
-- **Memory safety:** Keys exist in memory only, never on disk unencrypted
+### Cryptographic profile (client and server)
+
+```
+Data channel:  AES-256-GCM, CHACHA20-POLY1305, AES-128-GCM (AEAD)
+Control:       TLS 1.2 minimum, TLS 1.3 supported
+Control auth:  tls-crypt v1 (hides and authenticates the control channel)
+Certificates:  ECDSA P-384, unique per user
+Server pinning: verify-x509-name server name + remote-cert-tls server
+Compression:   disabled (avoids VORACLE-style compression oracles)
+CRL:           checked on every connection; revoking a user takes effect immediately
+```
+
+`tls-version-min 1.2` is deliberate. TLS-1.3-only profiles fail on some older
+OpenVPN Connect builds; 1.2 with TLS 1.3 negotiated when available is the
+compatible, standard choice. `tls-crypt` (v1) is used instead of
+`tls-crypt-v2` because it is supported by every current OpenVPN client,
+including OpenVPN Connect on Android/iOS.
 
 ---
 
-## 🙏 Credits
+## Downloads (from the VPS to your device)
 
-**Made by jackh0006**  
-📧 jackh109867@gmail.com
+Profiles live in `/etc/openvpn/clients/` (directory 700, files 600). Nothing
+is served over plain HTTP.
 
-This installer is dedicated to digital freedom and privacy for everyone.
+### Linux / macOS / WSL
+
+```bash
+scp root@YOUR_SERVER:/etc/openvpn/clients/MHH06-01.ovpn ~/Downloads/
+```
+
+Or use the helper on your local machine:
+
+```bash
+bash scripts/download-ovpn.sh root@YOUR_SERVER MHH06-01
+```
+
+### Windows (PowerShell)
+
+```powershell
+scp root@YOUR_SERVER:/etc/openvpn/clients/MHH06-01.ovpn $env:USERPROFILE\Downloads\
+```
+
+Or:
+
+```powershell
+.\scripts\download-ovpn.ps1 -Server root@YOUR_SERVER -Profile MHH06-01
+```
+
+### Android
+
+Option A — Termux:
+
+```bash
+pkg install openssh
+scp root@YOUR_SERVER:/etc/openvpn/clients/MHH06-01.ovpn ~/storage/downloads/
+```
+
+Then open the file with **OpenVPN Connect**.
+
+Option B — one-time HTTPS link (no SSH client needed):
+
+```bash
+sudo vpn-installer download MHH06-01 --serve
+```
+
+This starts a short-lived HTTPS server with a 256-bit random token, serves
+exactly one file once, and exits. The certificate is self-signed; accept it
+once in the browser.
+
+### Print through SSH
+
+```bash
+ssh root@YOUR_SERVER 'vpn-installer download MHH06-01 --print' > MHH06-01.ovpn
+```
+
+Import the resulting file into **OpenVPN Connect** (Android/iOS), **OpenVPN
+GUI** (Windows) or **Tunnelblick** (macOS).
 
 ---
 
-## 🗑️ Removing Other Repositories
+## Non-destructive HAProxy integration
 
-If you have other repositories named "OpenVPN Wizard" or similar on your GitHub, please:
-1. Navigate to each repository on GitHub
-2. Go to Settings → General → Danger Zone → Delete this repository
-3. Confirm deletion
-4. Keep only this repository as the official OpenVPN Wizard
+This is the part most installers get wrong. v2 **never rewrites** your
+`/etc/haproxy/haproxy.cfg`. Instead it:
+
+1. checks whether another frontend already binds the requested port;
+2. backs up the current file to `/var/backups/vpn-installer/`;
+3. appends one clearly marked block:
+   ```haproxy
+   # >>> openvpn-wizard managed block (v2) - do not edit >>>
+   frontend ovpn_wizard_frontend_443
+       bind *:443
+       ...
+   backend ovpn_wizard_openvpn
+       server openvpn 127.0.0.1:1194
+   # <<< openvpn-wizard managed block <<<
+   ```
+4. runs `haproxy -c -f …` before reloading;
+5. restores the previous file automatically if validation or reload fails.
+
+On later runs it replaces **only** that block. `vpn-installer uninstall`
+removes **only** that block. To detach the VPN manually, delete the marked
+block and reload HAProxy.
+
+If another service already owns the port, the installer refuses to proceed
+and tells you exactly which line/process is responsible. It never kills or
+reconfigures unrelated services. Use `--port 8443`, `--proto udp`, or free the
+port yourself.
+
+---
+
+## Firewall and kernel changes
+
+* Opens only the VPN public port (`tcp` or `udp`) and preserves existing rules.
+* Adds NAT/forwarding **only in free mode**. Locked mode deliberately adds no
+  NAT, so the VPS cannot be used as an internet exit node.
+* Never runs `ufw reset`, never flushes iptables, never disables IPv6.
+* Writes `/etc/sysctl.d/99-openvpn-wizard.conf`; enables BBR only when the
+  kernel module is actually available.
+* Persists rules with `netfilter-persistent` when present, otherwise with
+  `iptables-save` into the existing `/etc/iptables/rules.v4`.
+
+---
+
+## Management
+
+```bash
+sudo vpn-installer manage      # add, revoke, rename, rotate, export
+sudo vpn-installer validate    # re-run all checks
+sudo vpn-installer doctor      # explain problems and exact fixes
+sudo vpn-installer download    # list profiles / show download options
+sudo vpn-installer uninstall   # detach safely (keeps keys unless --purge)
+```
+
+Management actions:
+
+| Action | Effect |
+|---|---|
+| Add user | New unique certificate/key + profile; old users untouched |
+| Revoke user | Adds cert to CRL, reloads OpenVPN, deletes the profile |
+| Change password | Updates PAM and the hash in SQLite |
+| Rename profile | Renames the `.ovpn`; certificate is unchanged |
+| Rotate keys | Revokes the old cert and issues a new key pair |
+| Export | Re-renders and validates the profile |
+
+The SQLite database stores PBKDF2 hashes and metadata only. It never stores
+private keys or plaintext passwords.
+
+---
+
+## Honest security notes
+
+* Traffic between client and VPS is encrypted and authenticated with modern
+  AEAD ciphers, `tls-crypt`, and unique ECDSA certificates.
+* TCP/443 makes the connection look like HTTPS **at the port level**. A
+  determined DPI system that blocks unknown protocols can still identify
+  OpenVPN; no OpenVPN configuration can guarantee invisibility. The optional
+  VLESS/Reality path is the stronger anti-DPI option.
+* A VPS operator can always observe metadata (connection times, volume) and,
+  because the VPN terminates there, traffic in principle. Use a provider you
+  trust.
+* TCP inside TCP can reduce throughput on lossy links. Use UDP if speed
+  matters and the network allows it.
+* IPv6 is not disabled on the host (that would break unrelated services).
+  Free-tunnel profiles push `block-ipv6` to clients; verify on your device if
+  IPv6 leaks matter to you.
+* Treat `.ovpn` files as private keys. Use `scp`/the one-time token server,
+  never email or chat. Revoke and rotate if one leaks.
+
+---
+
+## Requirements
+
+* Ubuntu 22.04/24.04 or Debian 12 (x86_64 or arm64)
+* Root access
+* A public IPv4 address
+* For domain mode: a DNS A/AAAA record pointing at the VPS
+* Ports: the chosen VPN port (443 by default); port 80 only if you enable
+  Let's Encrypt for the optional VLESS listener
+
+---
+
+## Upgrade from v1
+
+v1 hardcoded credentials and replaced the entire HAProxy config. v2 does
+neither. Before upgrading:
+
+1. Keep a copy of the current profiles.
+2. Run `sudo vpn-installer install` (v2). If it detects the exact v1 HAProxy
+   layout, it backs it up and migrates to the append-only layout — the backup
+   path is printed.
+3. Existing v1 PKI at `/etc/openvpn/pki` or `/etc/openvpn/easy-rsa/pki` is
+   reused when healthy, so current profiles keep working.
+4. Re-download profiles for the new users. v1 tls-crypt-v2 clients are
+   converted to standard `tls-crypt` only for newly generated profiles; do not
+   delete the old `.ovpn` files until the new ones are tested.
+
+If anything looks wrong, run `sudo vpn-installer doctor` and read the full log
+at `/var/log/vpn-installer/install.log`.
+
+---
+
+## Development
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e '.[dev]'
+pytest -q
+vpn-installer plan --output /tmp/vpn-plan
+```
+
+The test suite renders real certificates and profiles, checks certificate/key
+matching, verifies HAProxy merge idempotency, and asks the real `openvpn`
+binary to parse every generated configuration when it is installed.
+
+---
+
+## License
+
+MIT. Made by [jackh0006](https://github.com/jackh0006) ·
+jackh109867@gmail.com. No telemetry, no tracking, no phone-home.

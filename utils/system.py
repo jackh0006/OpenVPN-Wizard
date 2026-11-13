@@ -3,7 +3,6 @@ System Utilities - IP detection, interface detection, system info.
 """
 
 import subprocess
-import socket
 import requests
 from typing import Optional
 from core.logger import get_logger

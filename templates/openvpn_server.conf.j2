@@ -1,37 +1,81 @@
-port 1194
-proto tcp4
-local 127.0.0.1
+# OpenVPN Wizard v2 - server configuration
+# Generated: {{ generated_at }}
+# Transport: {{ config.vpn_proto }} | Auth: {{ config.auth_mode }} | Access: {{ config.access_mode }}
+#
+# This file is managed by OpenVPN Wizard. A timestamped backup is created
+# before every change.
+
+port {{ config.openvpn_listen_port }}
+proto {{ "tcp-server" if config.vpn_proto == "tcp" else "udp4" }}
+local {{ config.openvpn_bind_address }}
 dev tun
+topology subnet
+server {{ config.vpn_subnet }} {{ config.vpn_netmask }}
+ifconfig-pool-persist /var/lib/openvpn/ipp.txt
+
 user nobody
 group nogroup
 persist-key
 persist-tun
 keepalive 10 60
+max-clients {{ config.max_clients }}
+
+# ── Cryptography ────────────────────────────────────────────────────────
+# AEAD data channel; no compression (compression is a known oracle risk).
+data-ciphers AES-256-GCM:CHACHA20-POLY1305:AES-128-GCM
+data-ciphers-fallback AES-256-GCM
+auth SHA256
 cipher AES-256-GCM
-auth SHA384
-tls-version-min 1.3
-tls-ciphersuites TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
-tls-crypt /etc/openvpn/ta.key
-ca /etc/openvpn/ca.crt
-cert /etc/openvpn/server.crt
-key /etc/openvpn/server.key
-dh /etc/openvpn/dh.pem
-plugin /usr/lib/x86_64-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so login
+tls-version-min 1.2
+tls-ciphersuites TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256
+tls-cipher TLS-ECDHE-ECDSA-WITH-AES-256-GCM-SHA384:TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384:TLS-ECDHE-ECDSA-WITH-CHACHA20-POLY1305-SHA256:TLS-ECDHE-RSA-WITH-CHACHA20-POLY1305-SHA256
+tls-crypt {{ config.openvpn_dir }}/ta.key
+ca {{ config.openvpn_dir }}/ca.crt
+cert {{ config.openvpn_dir }}/server.crt
+key {{ config.openvpn_dir }}/server.key
+dh {{ config.dh }}
+crl-verify {{ config.openvpn_dir }}/crl.pem
+remote-cert-tls client
+{% if config.auth_mode == "userpass" %}
+# Certificate + PAM password: two independent factors.
+plugin {{ pam_plugin }} login
 username-as-common-name
 verify-client-cert require
-server 10.8.0.0 255.255.255.0
-topology subnet
+{% else %}
+# Certificate-only: possession of the unique client key is the credential.
+verify-client-cert require
+{% endif %}
+
+# ── Routing policy ──────────────────────────────────────────────────────
+{% if config.access_mode == "free" %}
+# Full tunnel: client internet traffic exits through this VPS.
 push "redirect-gateway def1 bypass-dhcp"
-push "dhcp-option DNS 1.1.1.1"
-push "dhcp-option DNS 8.8.8.8"
+push "dhcp-option DNS {{ config.dns1 }}"
+push "dhcp-option DNS {{ config.dns2 }}"
 push "block-outside-dns"
-reneg-sec 0
-explicit-exit-notify 0
-log-append /var/log/openvpn.log
-verb 3
-mute 20
-# Performance / stealth
+push "block-ipv6"
+{% else %}
+# Locked: clients can only reach the VPN subnet, never the public internet.
+# No redirect-gateway and no DNS push.
+push "route {{ config.vpn_subnet }} {{ config.vpn_netmask }}"
+{% endif %}
+
+{% if config.access_mode == "free" %}
+# IPv6 is intentionally NOT disabled on the host (that would break unrelated
+# services). Clients are told to block IPv6 to prevent leaks.
+{% endif %}
+reneg-sec 3600
+
+{% if config.vpn_proto == "tcp" %}
+tcp-nodelay
+mssfix 1360
+{% else %}
+mssfix 1420
+{% endif %}
 sndbuf 0
 rcvbuf 0
-push "sndbuf 0"
-push "rcvbuf 0"
+
+log-append /var/log/openvpn/server.log
+status /var/log/openvpn/status.log 30
+verb 3
+mute 20

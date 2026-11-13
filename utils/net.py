@@ -5,7 +5,6 @@ Network Utilities - Port checking, listening ports.
 import socket
 import subprocess
 from typing import List, Tuple
-from core.logger import get_logger
 
 
 def check_port(host: str, port: int, timeout: float = 2.0) -> bool:
