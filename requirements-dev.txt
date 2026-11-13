@@ -1,0 +1,9 @@
+# Runtime dependencies are declared in pyproject.toml.
+# This file installs the extra tools used by tests and contributors.
+-r requirements.txt
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+ruff>=0.1.0
+bandit>=1.7.0
+build>=1.0.0
