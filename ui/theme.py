@@ -2,7 +2,6 @@
 UI Theme - Color scheme, styles, and animations.
 """
 
-from rich.style import Style
 from rich.theme import Theme
 from rich.console import Console
 

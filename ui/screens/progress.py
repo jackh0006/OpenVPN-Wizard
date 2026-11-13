@@ -3,22 +3,19 @@ Progress Screen - Live installation progress with details.
 """
 
 import asyncio
-import time
 from typing import List, Tuple
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 from rich.live import Live
 from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
-from rich.align import Align
 
-from ui.theme import get_console, COLORS, SPINNER_FRAMES
-from ui.components import ProgressStep, CreditsFooter, SectionHeader, InfoBox
+from ui.components import ProgressStep, SectionHeader
 from core.config import InstallConfig
 from core.state import InstallState, StepState, StateManager
 from core.logger import StepLogger, get_logger
-from core.exceptions import InstallerError, UserAbortError
+from core.exceptions import InstallerError, UserAbortError, format_error
+from core.logger import get_log_path
 
 
 class ProgressScreen:
@@ -43,6 +40,7 @@ class ProgressScreen:
         self.current_step_idx = 0
         self.step_outputs = {}
         self.already_done = already_done or set()
+        self.last_error = ""
 
     async def run(self) -> bool:
         """Run installation with live progress. Returns True on success."""
@@ -217,7 +215,18 @@ class ProgressScreen:
 
         except UserAbortError:
             raise
+        except InstallerError as e:
+            self.last_error = format_error(e, get_log_path())
+            self.logger.error(f"Step {step_id} failed: {e}")
+            self.state.mark_step_failed(step_id, str(e))
+            self.state_manager.save(self.state)
+            live.update(self._make_layout(progress))
+            return False
         except Exception as e:
+            self.last_error = (
+                f"[bold red]❌ Unexpected error in {display_name}[/bold red]\n\n"
+                f"{e}\n\nFull log: {get_log_path()}"
+            )
             self.logger.error(f"Step {step_id} failed: {e}")
             self.state.mark_step_failed(step_id, str(e))
             self.state_manager.save(self.state)

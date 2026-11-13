@@ -1,141 +1,140 @@
 """
-Step 1: Install System Packages
+Step: install only the packages this configuration needs.
 """
 
-import asyncio
-from typing import Callable, List
+from __future__ import annotations
+
+import os
+import shutil
 from pathlib import Path
+from typing import Callable, List
+
 from core.config import InstallConfig
+from core.exceptions import SystemError
 from steps.base import BaseStep
-from core.logger import get_logger
 
 
 class PackagesStep(BaseStep):
-    """Install required system packages."""
-
     @property
     def name(self) -> str:
         return "packages"
 
     @property
     def display_name(self) -> str:
-        return "Install System Packages"
+        return "Install system packages"
 
     @property
     def description(self) -> str:
-        return "Install HAProxy, OpenVPN, Easy-RSA, 3X-UI, and dependencies"
+        return "OpenVPN, Easy-RSA, iptables and (when needed) HAProxy/3X-UI"
 
-    PACKAGES = [
-        # Core
-        "haproxy",
-        "openvpn",
-        "easy-rsa",
-        "nginx",          # serves the .ovpn download page
-        "sqlite3",
+    def packages(self, config: InstallConfig) -> List[str]:
+        pkgs = [
+            "openvpn",
+            "easy-rsa",
+            "openssl",
+            "iptables",
+            "iptables-persistent",
+            "curl",
+            "ca-certificates",
+            "qrencode",
+            "socat",
+            "net-tools",
+            "iproute2",
+        ]
+        if config.use_haproxy:
+            pkgs.append("haproxy")
+        if config.enable_vless:
+            pkgs.extend(["sqlite3", "certbot"])
+        return pkgs
 
-        # Tools
-        "curl",
-        "ca-certificates",
-        "iptables-persistent",
-        "net-tools",
-    ]
+    async def is_already_done(self, config: InstallConfig) -> bool:
+        for pkg in self.packages(config):
+            if self._run_cmd(["dpkg", "-s", pkg], check=False).returncode != 0:
+                return False
+        return shutil.which("openvpn") is not None and (
+            not config.use_haproxy or shutil.which("haproxy") is not None
+        )
 
-    def _apt_env(self) -> dict:
-        """Environment for non-interactive apt runs (no debconf prompts, keeps PATH)."""
-        import os
-        env = dict(os.environ)
-        env["DEBIAN_FRONTEND"] = "noninteractive"
-        return env
-
-    async def is_already_done(
-        self,
-        config: InstallConfig,
-    ) -> bool:
-        """Check if key packages are already installed."""
-        critical = ["haproxy", "openvpn", "easy-rsa", "sqlite3", "python3"]
-        missing = []
-        for pkg in critical:
-            result = self._run_cmd(["dpkg", "-s", pkg], check=False)
-            if result.returncode != 0:
-                missing.append(pkg)
-        return len(missing) == 0
-
-    async def execute(
-        self,
-        config: InstallConfig,
-        output_callback: Callable[[str], None] = None,
-    ) -> bool:
-        """Execute package installation."""
-
+    async def execute(self, config: InstallConfig,
+                      output_callback: Callable[[str], None] = None) -> bool:
         def log(msg: str):
             if output_callback:
                 output_callback(msg)
             self.logger.info(msg)
 
-        env = self._apt_env()
+        env = dict(os.environ)
+        env["DEBIAN_FRONTEND"] = "noninteractive"
 
-        log("Updating package lists...")
-        self._run_cmd(["apt-get", "update", "-y"], env=env)
-
-        log("Installing required packages...")
-        # Install in batches to show progress
-        batch_size = 5
-        for i in range(0, len(self.PACKAGES), batch_size):
-            batch = self.PACKAGES[i:i+batch_size]
-            log(f"Installing: {', '.join(batch)}")
-            self._run_cmd(
-                ["apt-get", "install", "-y", "--no-install-recommends"] + batch,
-                env=env, timeout=900,
-            )
-
-        # Install 3X-UI
-        log("Installing 3X-UI panel...")
-        await self._install_xui(log)
-
-        # Verify installations
-        log("Verifying installations...")
-        for pkg, path in [
-            ("haproxy", "haproxy"),
-            ("openvpn", "openvpn"),
-            ("easy-rsa", "/usr/share/easy-rsa/easyrsa"),
-            ("sqlite3", "sqlite3"),
-        ]:
-            if path.startswith("/"):
-                ok = Path(path).exists()
-                found = path
-            else:
-                result = self._run_cmd(["which", pkg], check=False)
-                ok = result.returncode == 0
-                found = result.stdout.strip()
-            if not ok:
-                raise RuntimeError(f"Package {pkg} not found after installation")
-            log(f"  ✓ {pkg}: {found}")
-
-        log("All packages installed successfully")
-        return True
-
-    async def _install_xui(self, log):
-        """Install 3X-UI via official script."""
-        # Check if already installed
-        result = self._run_cmd(["which", "x-ui"], check=False)
-        if result.returncode == 0:
-            log("  ✓ 3X-UI already installed")
-            return
-
-        # Download and run official install script
-        log("Downloading 3X-UI installer...")
+        # Prevent debconf from asking questions about saving iptables rules.
         self._run_cmd([
             "bash", "-c",
-            "curl -fsSL https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh | bash -s -- --version v2.5.3"
-        ])
+            "echo 'iptables-persistent iptables-persistent/autosave_v4 boolean true' | debconf-set-selections; "
+            "echo 'iptables-persistent iptables-persistent/autosave_v6 boolean true' | debconf-set-selections",
+        ], env=env, check=False)
 
-        # Verify
-        result = self._run_cmd(["which", "x-ui"], check=False)
-        if result.returncode != 0:
-            raise RuntimeError("3X-UI installation failed")
-        log("  ✓ 3X-UI installed")
+        log("Updating package index...")
+        self._run_cmd(["apt-get", "update", "-y"], env=env, timeout=600)
 
-    async def rollback(self, config: InstallConfig, rollback_data: dict) -> bool:
-        """Rollback package installation (optional - packages stay)."""
-        self.logger.warning("Package rollback not implemented - packages remain installed")
+        missing = [
+            pkg for pkg in self.packages(config)
+            if self._run_cmd(["dpkg", "-s", pkg], check=False).returncode != 0
+        ]
+        if missing:
+            log("Installing: " + ", ".join(missing))
+            result = self._run_cmd(
+                ["apt-get", "install", "-y", "--no-install-recommends", *missing],
+                env=env, timeout=1800, check=False,
+            )
+            if result.returncode != 0:
+                raise SystemError(
+                    "Package installation failed.\n" + (result.stderr or "")[-2000:],
+                    command="apt-get install " + " ".join(missing),
+                    fix_hint=(
+                        "Check internet access and whether another apt/dpkg process "
+                        "is running ('sudo fuser /var/lib/dpkg/lock-frontend'). "
+                        "No existing VPN configuration was touched."
+                    ),
+                )
+        else:
+            log("All required packages are already installed")
+
+        if config.enable_vless:
+            await self._install_xui(log)
+
+        for name, path in (("openvpn", "openvpn"), ("openssl", "openssl"),
+                           ("easy-rsa", "/usr/share/easy-rsa/easyrsa")):
+            found = Path(path).exists() if path.startswith("/") else shutil.which(path)
+            if not found:
+                raise SystemError(
+                    f"{name} is missing after installation",
+                    fix_hint=f"Run: apt-get install -y {name}",
+                )
+            log(f"  ✓ {name}: {path}")
+        if config.use_haproxy and not shutil.which("haproxy"):
+            raise SystemError(
+                "haproxy is missing after installation",
+                fix_hint="Run: apt-get install -y haproxy",
+            )
+        log("Packages ready")
         return True
+
+    async def _install_xui(self, log) -> None:
+        if shutil.which("x-ui"):
+            log("  ✓ 3X-UI already installed")
+            return
+        log("Installing 3X-UI (optional VLESS/Reality support)...")
+        result = self._run_cmd([
+            "bash", "-c",
+            "curl -fsSL https://raw.githubusercontent.com/MHSanaei/3x-ui/master/install.sh "
+            "| bash -s -- --version v2.5.3",
+        ], timeout=900, check=False)
+        if result.returncode != 0 or not shutil.which("x-ui"):
+            raise SystemError(
+                "3X-UI installation failed.\n" + (result.stderr or "")[-1500:],
+                command="3X-UI install script",
+                fix_hint=(
+                    "Retry, or disable VLESS (run without --enable-vless). "
+                    "OpenVPN itself is unaffected."
+                ),
+            )
+        log("  ✓ 3X-UI installed")

@@ -1,142 +1,90 @@
 #!/usr/bin/env bash
-# OpenVPN Wizard v1.1.0 - Linux AMD64 Client Auto-Installer
-# Run as root: curl -fsSL https://raw.githubusercontent.com/Jackh0006/openvpn-wizard/main/openvpn-wizard-linux.sh | bash
+# OpenVPN Wizard v2 - Linux client setup
+#
+# This runs on the CLIENT machine, not the VPS. It copies a profile from the
+# VPS over SSH (or accepts a local file), installs OpenVPN, and creates a
+# systemd service. No credentials are hardcoded.
+#
+# Usage:
+#   sudo ./openvpn-wizard-linux.sh --server root@203.0.113.10 --profile MHH06-01
+#   sudo ./openvpn-wizard-linux.sh --server root@vpn.example.com --profile MHH06-01 \
+#        --user mhh06-01
+#   sudo ./openvpn-wizard-linux.sh --file ./MHH06-01.ovpn
+#
+# For username/password profiles you will be prompted once; the password is
+# written to /etc/openvpn/client/auth.txt (mode 600), never to this script.
 
 set -euo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
+SERVER=""; PROFILE=""; LOCAL_FILE=""; USERNAME=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --server) SERVER="$2"; shift 2 ;;
+        --profile) PROFILE="$2"; shift 2 ;;
+        --file) LOCAL_FILE="$2"; shift 2 ;;
+        --user) USERNAME="$2"; shift 2 ;;
+        --help|-h)
+            grep '^# ' "$0" | sed 's/^# //'; exit 0 ;;
+        *) echo "Unknown option: $1" >&2; exit 2 ;;
+    esac
+done
 
-log() { echo -e "${BLUE}[${NC}$(date '+%H:%M:%S')${BLUE}]${NC} $*"; }
+RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
+log() { echo -e "${CYAN}[*]${NC} $*"; }
 ok()  { echo -e "${GREEN}[✓]${NC} $*"; }
-warn(){ echo -e "${YELLOW}[!]${NC} $*"; }
-err() { echo -e "${RED}[✗]${NC} $*"; }
-step(){ echo -e "\n${CYAN}▶${NC} ${BOLD}$*${NC}\n"; }
+die() { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
 
-[[ $EUID -ne 0 ]] && { err "Run as root"; exit 1; }
+[[ $EUID -eq 0 ]] || die "Run as root: sudo $0 ..."
 
-SERVER_IP="192.209.62.112"
-CLIENT_NAME="01-JH"
-CONFIG_URL="https://raw.githubusercontent.com/Jackh0006/openvpn-wizard/main/${CLIENT_NAME}-${SERVER_IP}.ovpn"
-CONFIG_DIR="/etc/openvpn"
-CONFIG_FILE="${CONFIG_DIR}/client.conf"
-
-step "OpenVPN Wizard v1.1.0 - Linux Client Auto-Install"
-
-# Detect distro
-if [[ -f /etc/os-release ]]; then
-    . /etc/os-release
-    log "Detected: $PRETTY_NAME"
-else
-    err "Cannot detect OS"
-    exit 1
-fi
-
-# Install OpenVPN
-step "Installing OpenVPN"
-case $ID in
-    ubuntu|debian) apt-get update -qq && apt-get install -y -qq openvpn resolvconf ;;
-    fedora|rhel|centos|rocky|almalinux) dnf install -y openvpn ;;
-    arch|manjaro) pacman -Sy --noconfirm openvpn ;;
-    *) err "Unsupported distro: $ID"; exit 1 ;;
+if [[ -f /etc/os-release ]]; then . /etc/os-release; else die "Cannot detect OS"; fi
+case "${ID:-}" in
+    ubuntu|debian) apt-get update -qq && apt-get install -y -qq openvpn openssh-client ;;
+    fedora|rhel|centos|rocky|almalinux) dnf install -y openvpn openssh-clients ;;
+    arch|manjaro) pacman -Sy --noconfirm openvpn openssh ;;
+    *) die "Unsupported distro: ${ID:-unknown}" ;;
 esac
-ok "OpenVPN installed"
 
-# Download config
-step "Downloading configuration"
-mkdir -p "$CONFIG_DIR"
-if curl -fsSL "$CONFIG_URL" -o "$CONFIG_FILE"; then
-    ok "Config downloaded to $CONFIG_FILE"
+mkdir -p /etc/openvpn/client
+if [[ -n "$LOCAL_FILE" ]]; then
+    [[ -f "$LOCAL_FILE" ]] || die "File not found: $LOCAL_FILE"
+    [[ -n "$PROFILE" ]] || PROFILE="$(basename "$LOCAL_FILE" .ovpn)"
+    install -m 600 "$LOCAL_FILE" "/etc/openvpn/client/${PROFILE}.conf"
 else
-    err "Failed to download config from $CONFIG_URL"
-    exit 1
+    [[ -n "$SERVER" && -n "$PROFILE" ]] || die "Use --file, or --server and --profile"
+    command -v scp >/dev/null || die "scp is required (openssh-client)"
+    log "Downloading ${PROFILE} from ${SERVER}..."
+    scp -q -o StrictHostKeyChecking=accept-new \
+        "${SERVER}:/etc/openvpn/clients/${PROFILE}.ovpn" \
+        "/etc/openvpn/client/${PROFILE}.conf"
+    chmod 600 "/etc/openvpn/client/${PROFILE}.conf"
 fi
 
-# Create systemd service
-step "Creating systemd service"
-cat > /etc/systemd/system/openvpn-client@.service <<EOF
-[Unit]
-Description=OpenVPN Client (%i)
-Documentation=https://github.com/Jackh0006/openvpn-wizard
-After=network-online.target
-Wants=network-online.target
+if grep -q '^auth-user-pass' "/etc/openvpn/client/${PROFILE}.conf"; then
+    [[ -n "$USERNAME" ]] || read -r -p "VPN username: " USERNAME
+    read -r -s -p "VPN password: " PASSWORD; echo
+    [[ -n "$USERNAME" && -n "$PASSWORD" ]] || die "Username and password are required for this profile."
+    printf '%s\n%s\n' "$USERNAME" "$PASSWORD" > /etc/openvpn/client/auth.txt
+    chmod 600 /etc/openvpn/client/auth.txt
+    # Point the profile at the local credentials file.
+    if ! grep -q '^auth-user-pass /etc/openvpn/client/auth.txt' "/etc/openvpn/client/${PROFILE}.conf"; then
+        sed -i 's#^auth-user-pass$#auth-user-pass /etc/openvpn/client/auth.txt#' \
+            "/etc/openvpn/client/${PROFILE}.conf"
+    fi
+fi
 
-[Service]
-Type=notify
-PrivateTmp=true
-ProtectSystem=full
-ProtectHome=yes
-NoNewPrivileges=yes
-PrivateTmp=true
-ProtectSystem=full
-ProtectHome=yes
-PrivateDevices=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-RestrictNamespaces=yes
-LockPersonality=yes
-MemoryDenyWriteExecute=yes
-RestrictRealtime=yes
-RestrictSUIDSGID=yes
-RemoveIPC=yes
-ProtectClock=yes
-ProtectProc=invisible
-ProcSubset=pid
-SystemCallFilter=@system-service
-SystemCallErrorNumber=EPERM
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_DAC_OVERRIDE CAP_SETGID CAP_SETUID
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-
-ExecStart=/usr/sbin/openvpn --config %i --auth-user-pass /etc/openvpn/auth.txt
-Restart=on-failure
-RestartSec=10
-KillMode=process
-KillSignal=SIGTERM
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Create auth file
-cat > /etc/openvpn/auth.txt <<EOF
-MHH06
-S271m31h41
-EOF
-chmod 600 /etc/openvpn/auth.txt
-
-# Enable and start
 systemctl daemon-reload
-systemctl enable openvpn-client@client
-systemctl start openvpn-client@client
+systemctl enable "openvpn-client@${PROFILE}.service"
+systemctl restart "openvpn-client@${PROFILE}.service"
 
-ok "OpenVPN client service started"
-
-# Verify connection
-sleep 3
-if ip addr show tun0 >/dev/null 2>&1; then
-    ok "VPN connected! Interface: tun0"
-    ip addr show tun0 | grep inet
+sleep 4
+if ip link show tun0 >/dev/null 2>&1 || ip link show tun1 >/dev/null 2>&1; then
+    ok "VPN connected."
 else
-    warn "VPN may not be connected yet. Check: journalctl -u openvpn-client@client -f"
+    echo "[!] The service is not connected yet. Check: journalctl -u openvpn-client@${PROFILE} -f"
 fi
 
-echo ""
-echo "=== Management ==="
-echo "  Status:  systemctl status openvpn-client@client"
-echo "  Logs:    journalctl -u openvpn-client@client -f"
-echo "  Stop:    systemctl stop openvpn-client@client"
-echo "  Restart: systemctl restart openvpn-client@client"
-echo ""
-echo "Credentials:"
-echo "  Username: MHH06"
-echo "  Password: S271m31h41"
-EOF
-chmod +x /root/openvpn-wizard/openvpn-wizard-linux.sh
-ok "Linux installer created"
+echo
+echo "Status:  systemctl status openvpn-client@${PROFILE}"
+echo "Logs:    journalctl -u openvpn-client@${PROFILE} -f"
+echo "Stop:    systemctl stop openvpn-client@${PROFILE}"
+echo "Remove:  systemctl disable --now openvpn-client@${PROFILE} && rm /etc/openvpn/client/${PROFILE}.conf"

@@ -2,17 +2,13 @@
 Step-by-Step Confirmation Screen - Ask before doing anything.
 """
 
-import asyncio
 from typing import List, Tuple
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
-from rich.rule import Rule
 from rich.align import Align
 
-from ui.theme import get_console, COLORS
-from ui.components import ConfirmAction, CreditsFooter, SectionHeader, ProgressStep
+from ui.components import ConfirmAction, CreditsFooter, SectionHeader
 from core.config import InstallConfig
 
 
@@ -32,15 +28,15 @@ class ConfirmScreen:
             "warning": "Requires internet access to download packages",
         },
         "haproxy": {
-            "what": "Write HAProxy config with SNI routing rules for all 4 backends",
-            "why": "HAProxy is the ONLY public listener on port 443. It decides where traffic goes based on SNI.",
+            "what": "Append a marked VPN frontend/backend block to HAProxy",
+            "why": "HAProxy can share a TCP port between the VPN and TLS traffic. Existing config stays byte-for-byte intact.",
             "files": [
-                "/etc/haproxy/haproxy.cfg (main config)",
-                "/etc/haproxy/haproxy.cfg.backup (auto-backup)",
+                "/etc/haproxy/haproxy.cfg (append-only marked block)",
+                "/var/backups/vpn-installer/ (timestamped backup)",
             ],
-            "rollback": "Automatic restore from backup on failure",
+            "rollback": "Only the marked block is removed; a failed test restores the backup",
             "time": "~3 seconds",
-            "warning": "This will REPLACE existing HAProxy config",
+            "warning": "Refuses to touch a port already owned by another frontend",
         },
         "xui": {
             "what": "Deploy 3X-UI panel with 3 inbounds: VLESS-TLS+xhttp on 10000 & 10004, VLESS-Reality+xhttp on 443 (all loopback-only)",
@@ -55,19 +51,19 @@ class ConfirmScreen:
             "warning": "Installs 3X-UI from official GitHub release",
         },
         "pki": {
-            "what": "Bootstrap Easy-RSA PKI: CA, server cert, client cert, DH params, TLS-crypt key",
-            "why": "PKI provides the cryptographic foundation. Every client gets a unique certificate.",
+            "what": "Create or reuse the Easy-RSA PKI: CA, server cert, one client cert per user, CRL, tls-crypt key",
+            "why": "Every user gets a unique identity so one person can be revoked without affecting others.",
             "files": [
-                "/etc/openvpn/pki/ (entire PKI directory)",
-                "/etc/openvpn/ca.crt, server.crt, server.key, dh.pem, ta.key (runtime copies)",
+                "/etc/openvpn/pki/ (CA, certs, private keys, CRL)",
+                "/etc/openvpn/ca.crt, server.crt, server.key, ta.key, crl.pem",
             ],
-            "rollback": "PKI directory can be deleted and recreated",
-            "time": "~15-30 seconds (DH params take time)",
-            "warning": "Generates 2048-bit DH parameters - may take 10-20s",
+            "rollback": "A healthy PKI is reused; an unusable one is moved aside with a timestamp",
+            "time": "~10-20 seconds",
+            "warning": "New installs use ECDSA P-384 (dh none); an existing RSA PKI gets a real DH file",
         },
         "pam": {
-            "what": "Create PAM system user for VPN authentication",
-            "why": "OpenVPN uses PAM (plugable auth) to verify username/password against system accounts.",
+            "what": "Create one non-login PAM account per user",
+            "why": "OpenVPN uses PAM to verify the optional password factor against system accounts.",
             "files": [
                 "/etc/passwd, /etc/shadow (user account)",
                 "/etc/openvpn/users.db (SQLite record)",
@@ -77,14 +73,15 @@ class ConfirmScreen:
             "warning": "Creates a system user with /usr/sbin/nologin shell",
         },
         "openvpn": {
-            "what": "Write OpenVPN server config (TCP 1194, TLS-crypt v1, AES-256-GCM, TLS 1.3 only)",
-            "why": "This is the OpenVPN server configuration. Maximum stealth & performance settings.",
+            "what": "Write the OpenVPN server config (AEAD, TLS 1.2+, tls-crypt, CRL)",
+            "why": "Defines transport, authentication and routing policy chosen in the wizard.",
             "files": [
                 "/etc/openvpn/server.conf (main config)",
+                "/etc/systemd/system/openvpn@.service.d/10-openvpn-wizard.conf (hardening)",
             ],
-            "rollback": "Config file restored from backup",
+            "rollback": "Config restored from a timestamped backup if OpenVPN fails to start",
             "time": "~2 seconds",
-            "warning": "Binds ONLY to 127.0.0.1:1194 (not public)",
+            "warning": "Loopback bind when HAProxy fronts the VPN; direct bind for UDP/--no-haproxy",
         },
         "kernel_fw": {
             "what": "Enable IPv4 forwarding, configure iptables NAT for VPN subnet",
@@ -108,15 +105,15 @@ class ConfirmScreen:
             "warning": "Restarts services if already running",
         },
         "client_profile": {
-            "what": "Generate client .ovpn file with embedded certs, keys, CA, and TLS-crypt",
-            "why": "Single-file profile contains everything needed to connect. Import into any OpenVPN client.",
+            "what": "Generate one standard .ovpn per user with a unique certificate and key",
+            "why": "Single-file profiles work with OpenVPN Connect, OpenVPN GUI and Tunnelblick.",
             "files": [
-                "/etc/openvpn/profiles/{client_name}.ovpn (client profile)",
-                "/var/www/vpn-profiles/{client_name}.ovpn (web download)",
+                "/etc/openvpn/clients/<profile>.ovpn (mode 600, directory 700)",
+                "/root/openvpn-wizard-credentials.txt (mode 600)",
             ],
             "rollback": "Profile files deleted",
             "time": "~2 seconds",
-            "warning": "Contains sensitive certificates - handle securely",
+            "warning": "Contains private keys - never share or serve over HTTP",
         },
         "user_db": {
             "what": "Store user record in SQLite database for management",

@@ -1,126 +1,46 @@
 """
-Success Screen - Completion with client profile and QR code.
+Success screen: exact download commands, profile list, and next steps.
 """
 
-import asyncio
-import io
-import base64
+from __future__ import annotations
+
+from pathlib import Path
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 from rich.align import Align
-from rich.columns import Columns
 
-# Optional QR code support
-try:
-    import qrcode
-    HAS_QRCODE = True
-except ImportError:
-    HAS_QRCODE = False
-
-from ui.theme import get_console, COLORS
-from ui.components import InfoBox, CreditsFooter, SectionHeader
 from core.config import InstallConfig
 from core.state import InstallState
+from ui.components import CreditsFooter, InfoBox, SectionHeader
 
 
 class SuccessScreen:
-    """Success screen with client profile delivery."""
-
     def __init__(self, console: Console, config: InstallConfig, state: InstallState):
         self.console = console
         self.config = config
         self.state = state
 
     async def run(self):
-        """Display success screen."""
         self.console.clear()
-        self.console.print(SectionHeader(5, 7, "Installation Complete!", "🎉").render())
-
-        # Success banner
-        banner = Panel(
+        self.console.print(SectionHeader(6, 6, "Installation complete", "🎉").render())
+        self.console.print(Panel(
             Align.center(
-                "[bold success]✅ VPN Stack Successfully Deployed![/bold success]\n\n"
-                "[primary]Your stealthy, multiplexed VPN is ready on port 443.[/primary]"
+                "[bold success]✅ Your VPN is ready[/bold success]\n\n"
+                f"[primary]{self.config.remote_host}:{self.config.public_port}/"
+                f"{self.config.vpn_proto}[/primary]  •  "
+                f"{len(self.config.users)} profile(s)"
             ),
-            border_style="success",
-            padding=(1, 2),
-        )
-        self.console.print(banner)
+            border_style="success", padding=(1, 2),
+        ))
 
-        # Client profile info
-        profile_info = InfoBox(
-            "file",
-            "📄 Client Profile Generated",
-            f"Profile: [path]{self.config.client_ovpn_path}[/path]",
-            [
-                f"Contains: CA cert, client cert, client key, TLS-crypt key",
-                f"Ready to import into OpenVPN Connect, V2rayNG, etc.",
-                f"Web download: [url]{self.config.web_ovpn_url}[/url]",
-            ]
-        )
-        self.console.print()
-        self.console.print(profile_info.render())
+        self._profile_table()
+        self._download_help()
+        self._security_notes()
 
-        # Connection test
-        test_info = InfoBox(
-            "tip",
-            "🧪 Test Your Connection",
-            "Run this on your client device after importing the .ovpn:",
-            [
-                "[code]openvpn --config your-profile.ovpn[/code]",
-                "",
-                "Or use OpenVPN Connect app (iOS/Android) → Import profile",
-                "",
-                "Verify: [code]curl -I https://example.com[/code] (should show 200)",
-                "Check IP: [code]curl ifconfig.me[/code] (should show VPS IP)",
-            ]
-        )
-        self.console.print()
-        self.console.print(test_info.render())
-
-        # What's running
-        running_info = InfoBox(
-            "server",
-            "🖥️ Services Running",
-            "All services are active and managed by systemd:",
-            [
-                "✅ HAProxy - Listening on 0.0.0.0:443 (SNI router)",
-                "✅ OpenVPN - Listening on 127.0.0.1:1194 (TCP)",
-                "✅ 3X-UI - VLESS inbounds on 10000, 10004, 443 (local)",
-            ]
-        )
-        self.console.print()
-        self.console.print(running_info.render())
-
-        # QR Code for mobile
-        if self._has_qrcode():
-            qr_panel = self._generate_qr_panel()
-            self.console.print()
-            self.console.print(qr_panel)
-
-        # Next steps
-        next_info = InfoBox(
-            "info",
-            "📋 What's Next?",
-            "Your VPN is ready. Here's what you can do:",
-            [
-                "1. Download the .ovpn file to your device",
-                "2. Import into OpenVPN client",
-                "3. Connect with your VPN username/password",
-                "4. Run 'vpn-installer manage' to add more users",
-                "5. Run 'vpn-installer validate' to verify everything",
-            ]
-        )
-        self.console.print()
-        self.console.print(next_info.render())
-
-        # Credits
         self.console.print()
         self.console.print(CreditsFooter.render())
-
-        # Wait for user
         self.console.print()
         self.console.print("[dim]Press Enter to continue...[/dim]")
         try:
@@ -128,40 +48,75 @@ class SuccessScreen:
         except (KeyboardInterrupt, EOFError):
             pass
 
-    def _has_qrcode(self) -> bool:
-        """Check if qrcode library is available."""
-        return HAS_QRCODE
-
-    def _generate_qr_panel(self) -> Panel:
-        """Generate QR code for .ovpn download URL."""
-        if not HAS_QRCODE:
-            return Panel(
-                "[dim]QR code generation not available (install 'qrcode' package)[/dim]",
-                title="[primary]📱 QR Code[/primary]",
-                border_style="primary",
-                padding=(1, 2),
+    def _profile_table(self):
+        table = Table(show_header=True, header_style="primary", box=None, padding=(0, 1))
+        table.add_column("#", width=3)
+        table.add_column("Profile", width=22)
+        table.add_column("Username", width=18)
+        table.add_column("File", width=44)
+        for i, user in enumerate(self.config.users, 1):
+            table.add_row(
+                str(i), user.name, user.username,
+                str(Path(self.config.profiles_dir) / f"{user.name}.ovpn"),
             )
-        try:
-            qr = qrcode.QRCode(version=1, box_size=2, border=1)
-            qr.add_data(self.config.web_ovpn_url)
-            qr.make(fit=True)
+        self.console.print()
+        self.console.print(Panel(table, title="[primary]Profiles[/primary]",
+                                 border_style="primary"))
 
-            # Render as ASCII
-            from io import StringIO
-            f = StringIO()
-            qr.print_ascii(out=f)
-            qr_ascii = f.getvalue()
+        self.console.print(InfoBox(
+            "security", "Credentials file",
+            "Usernames and passwords are stored only in a root-only file:",
+            [f"[path]{self.config.credentials_file}[/path] (mode 600)",
+             "Delete it after distributing credentials."],
+        ).render())
 
-            return Panel(
-                f"[bold]Scan to download .ovpn on mobile:[/bold]\n\n{qr_ascii}\n[dim]{self.config.web_ovpn_url}[/dim]",
-                title="[primary]📱 QR Code[/primary]",
-                border_style="primary",
-                padding=(1, 2),
+    def _download_help(self):
+        example = self.config.users[0].name if self.config.users else "MHH06-01"
+        host = self.config.remote_host
+        path = f"/etc/openvpn/clients/{example}.ovpn"
+        lines = [
+            "[bold]Linux / macOS / WSL[/bold] (runs on your device):",
+            f"  [code]scp root@{host}:{path} ~/Downloads/[/code]",
+            "",
+            "[bold]Windows PowerShell[/bold]:",
+            f"  [code]scp root@{host}:{path} $env:USERPROFILE\\Downloads\\[/code]",
+            "",
+            "[bold]Android (Termux)[/bold]:",
+            f"  [code]scp root@{host}:{path} ~/storage/downloads/[/code]",
+            "",
+            "[bold]Any device with a browser (one-time HTTPS link)[/bold]:",
+            f"  [code]sudo vpn-installer download {example} --serve[/code]",
+            "  Prints a random token URL that works once, then shuts down.",
+            "",
+            f"[dim]A helper for your local machine is in scripts/download-ovpn.sh "
+            f"(and .ps1 for Windows).[/dim]",
+        ]
+        self.console.print()
+        self.console.print(Panel("\n".join(lines), title="[primary]Download[/primary]",
+                                 border_style="primary", padding=(1, 2)))
+
+    def _security_notes(self):
+        notes = [
+            "Import the .ovpn into OpenVPN Connect (Android/iOS), OpenVPN GUI "
+            "(Windows) or Tunnelblick (macOS).",
+            "Each profile has a different certificate and key. Revoking one user "
+            "does not affect the others.",
+            "Usernames/passwords are only used when authentication is "
+            "certificate + password; certificate-only profiles skip the prompt.",
+            "Test on a phone on mobile data (not the same Wi-Fi as the VPS) to "
+            "confirm the path through your ISP works.",
+        ]
+        if self.config.vpn_proto == "tcp":
+            notes.append(
+                "TCP is robust through firewalls but can feel slower on lossy "
+                "links (TCP-over-TCP). If throughput matters, re-run with UDP."
             )
-        except Exception:
-            return Panel(
-                "[dim]QR code generation failed[/dim]",
-                title="[primary]📱 QR Code[/primary]",
-                border_style="primary",
-                padding=(1, 2),
-            )
+        self.console.print(InfoBox("tip", "Good to know", "A few honest notes:",
+                                   notes).render())
+        self.console.print(InfoBox(
+            "warning", "What this can and cannot hide",
+            "Traffic is encrypted and authenticated end-to-end, and TCP/443 "
+            "blends in with HTTPS at the port level. No VPN can guarantee "
+            "invisibility to a determined DPI system that blocks unknown "
+            "protocols; VLESS/Reality (optional) is the stronger anti-DPI path.",
+        ).render())

@@ -1,7 +1,8 @@
 """Utils package for the VPN installer."""
 
 from utils.system import get_public_ip, get_wan_interface, get_system_info
-from utils.crypto import generate_password_hash, verify_password, generate_x25519_key
+from utils.crypto import generate_password_hash, generate_x25519_key
+from core.secrets import verify_password
 from utils.net import check_port, get_listening_ports
 
 __all__ = [

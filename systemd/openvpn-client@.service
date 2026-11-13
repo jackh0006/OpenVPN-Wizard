@@ -1,18 +1,15 @@
 [Unit]
-Description=OpenVPN Client (%i)
-Documentation=https://github.com/yourname/openvpn-wizard
+Description=OpenVPN client (%i)
+Documentation=https://github.com/jackh0006/OpenVPN-Wizard
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=notify
-PrivateTmp=true
+PrivateTmp=yes
 ProtectSystem=full
 ProtectHome=yes
 NoNewPrivileges=yes
-PrivateTmp=true
-ProtectSystem=full
-ProtectHome=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
@@ -29,10 +26,9 @@ ProtectProc=invisible
 ProcSubset=pid
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_DAC_OVERRIDE CAP_SETGID CAP_SETUID
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_DAC_OVERRIDE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-
-ExecStart=/usr/sbin/openvpn --config %i --auth-user-pass /etc/openvpn/auth.txt
+ExecStart=/usr/sbin/openvpn --config /etc/openvpn/client/%i.conf
 Restart=on-failure
 RestartSec=10
 KillMode=process

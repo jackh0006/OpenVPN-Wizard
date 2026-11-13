@@ -1,136 +1,69 @@
-# OpenVPN Wizard - User Management Guide
-
-## Overview
-
-The user management system lets you add, remove, rename, and manage VPN users without reinstalling. Access it anytime:
+# User management (v2)
 
 ```bash
 sudo vpn-installer manage
 ```
 
-## User Management Actions
+Menu:
 
-### 1. Add User
+| Option | Action | Certificate impact |
+|---|---|---|
+| 1 | Add user | Issues a new unique certificate/key |
+| 2 | Revoke/remove | Revokes the cert, regenerates the CRL, reloads OpenVPN |
+| 3 | Change password | PAM + PBKDF2 hash only |
+| 4 | Rename profile | Renames the `.ovpn`; cert unchanged |
+| 5 | Regenerate/export | Re-renders and validates the same profile |
+| 6 | Detailed list | DB metadata, cert serial, status |
+| 7 | Rotate certificate/key | Revokes old cert, issues a new key pair |
+| 8 | Download command | Prints SCP and one-time HTTPS commands |
+| 9 | Refresh | Reload the list |
 
-Creates a new VPN user with:
-- A PAM system account
-- A unique client certificate (Easy-RSA)
-- A .ovpn profile file with embedded certificates
-- A web-downloadable copy
+## Add a user
 
-**Steps:**
-1. Select `1` (Add User) in the management menu
-2. Enter profile name (e.g., `02-Alice`)
-3. Enter username (e.g., `alice`)
-4. Enter strong password (min 12 characters)
-5. Confirm password
-6. Download the generated .ovpn profile
+The wizard asks for a profile name and username. In password mode it offers an
+auto-generated strong password or a manual one. On success it prints:
 
-### 2. Remove User
+* the profile path (`/etc/openvpn/clients/<name>.ovpn`)
+* the password (once)
+* the exact SCP download command
 
-Revokes a user's access by:
-- Revoking their certificate (Easy-RSA CRL)
-- Deleting their PAM user account
-- Marking them as revoked in the database
-- Removing their .ovpn profile files
+The new user can connect immediately; no service restart is required for a
+new client certificate.
 
-**Steps:**
-1. Select `2` (Remove User)
-2. Choose the user from the list
-3. Confirm removal
+## Revoke a user
 
-### 3. Change Password
+Revocation:
 
-Changes a user's VPN password:
-- Updates PAM password
-- Updates password hash in database
-- No need to regenerate certificates
+1. runs `easyrsa revoke <cert>`,
+2. regenerates `crl.pem` and copies it to `/etc/openvpn/crl.pem`,
+3. reloads OpenVPN,
+4. deletes the profile,
+5. marks the DB row revoked.
 
-**Steps:**
-1. Select `3` (Change Password)
-2. Choose the user from the list
-3. Enter new strong password
-4. Confirm new password
+The next TLS renegotiation/connection for that certificate is rejected.
+Existing long-lived sessions may continue until they reconnect.
 
-### 4. Rename User
+## Change password
 
-Changes a user's profile display name:
-- Updates the `name` column in the database
-- Renames the .ovpn profile file
-- Does NOT change the username or certificate
+Updates the PAM account with `chpasswd` (stdin, never argv) and stores a new
+PBKDF2 hash. Certificate-only installs do not show this option.
 
-**Steps:**
-1. Select `4` (Rename User)
-2. Choose the user from the list
-3. Enter new profile name
+## Rotate keys
 
-### 5. Export Profile
+Use this when a profile leaks or a device is replaced. The old certificate is
+revoked and a fresh one issued under a new CN; the profile is regenerated at
+the same display name, so the user just re-imports it.
 
-Regenerates a user's .ovpn profile file:
-- Creates a fresh profile with current certificates
-- Saves to `/etc/openvpn/profiles/`
-- Copies to `/var/www/vpn-profiles/` for web download
+## Where things live
 
-**Steps:**
-1. Select `5` (Export Profile)
-2. Choose the user from the list
-3. Download the profile from the displayed path
+| Item | Path |
+|---|---|
+| Profiles | `/etc/openvpn/clients/` |
+| PKI | `/etc/openvpn/pki/` |
+| User DB | `/etc/openvpn/users.db` |
+| Credentials sheet | `/root/openvpn-wizard-credentials.txt` |
+| Installer state | `/var/lib/vpn-installer/state.json` |
 
-### 6. List Users
-
-View all users with their status:
-- Active users (green 🟢)
-- Revoked users (red 🔴)
-- Creation dates
-- Usernames
-
-## User Database Schema
-
-```sql
-CREATE TABLE users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL,           -- Display name
-    username TEXT UNIQUE NOT NULL,       -- PAM login name
-    password_hash TEXT NOT NULL,         -- SHA-512 crypt hash
-    client_cert TEXT,                     -- PEM certificate
-    client_key TEXT,                      -- PEM private key
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    revoked BOOLEAN DEFAULT 0,           -- 0 = active, 1 = revoked
-    cert_serial TEXT                      -- Certificate serial number
-);
-```
-
-## Security Notes
-
-- Passwords are hashed with SHA-512 crypt (never stored in plain text)
-- Private keys are stored with 600 permissions
-- Revoked certificates are added to the CRL (Certificate Revocation List)
-- OpenVPN automatically reloads the CRL when it changes
-- Removed users cannot reconnect even with old .ovpn files
-
-## Example Workflow
-
-```bash
-# Add a new family member
-sudo vpn-installer manage
-# → 1 (Add User)
-# → Name: 02-Mom
-# → Username: mom
-# → Password: StrongPass123!
-# → Download: /etc/openvpn/profiles/02-Mom.ovpn
-
-# Later, revoke access
-sudo vpn-installer manage
-# → 2 (Remove User)
-# → Select: 02-Mom
-# → Confirm: Yes
-```
-
-## Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| User not showing | Run `sudo vpn-installer manage` → 6 (List Users) |
-| Can't connect after adding | Wait 30 seconds for services to reload |
-| Password not working | Ensure PAM user was created correctly |
-| Profile download fails | Check nginx is running: `systemctl status nginx` |
+The database stores `name`, `username`, PBKDF2 hash, certificate name/serial,
+auth mode, access mode and profile path. It never stores private keys or
+plaintext passwords.

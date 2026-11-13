@@ -1,101 +1,56 @@
 """
-Step 2: Configure HAProxy with SNI Routing
+Step: attach the VPN to HAProxy without disturbing existing config.
 """
 
-import asyncio
+from __future__ import annotations
+
 from typing import Callable
-from pathlib import Path
+
 from core.config import InstallConfig
 from steps.base import BaseStep
-from core.logger import get_logger
+from utils.haproxy import HAProxyManager
 
 
 class HAProxyStep(BaseStep):
-    """Configure HAProxy with SNI-based routing."""
-
-    TEMPLATE_PATH = Path(__file__).parent.parent / "templates" / "haproxy.cfg.j2"
-
     @property
     def name(self) -> str:
         return "haproxy"
 
     @property
     def display_name(self) -> str:
-        return "Configure HAProxy with SNI Routing"
+        return "Add VPN listener to HAProxy"
 
     @property
     def description(self) -> str:
-        return "Write HAProxy config with SNI routing rules for OpenVPN, VLESS-TLS, VLESS-Reality"
+        return "Append a marked, reversible frontend/backend block; never rewrite other config"
 
-    async def is_already_done(
-        self,
-        config: InstallConfig,
-    ) -> bool:
-        """Check if HAProxy is already configured."""
-        cfg_path = Path(config.haproxy_cfg)
-        if not cfg_path.exists():
-            return False
-        # Check if it has our SNI routing
-        content = cfg_path.read_text()
-        return "ft_443" in content and "bk_openvpn" in content
+    async def is_already_done(self, config: InstallConfig) -> bool:
+        return False
 
-    async def execute(
-        self,
-        config: InstallConfig,
-        output_callback: Callable[[str], None] = None,
-    ) -> bool:
-        """Execute HAProxy configuration."""
-
+    async def execute(self, config: InstallConfig,
+                      output_callback: Callable[[str], None] = None) -> bool:
         def log(msg: str):
             if output_callback:
                 output_callback(msg)
             self.logger.info(msg)
 
-        log("Backing up existing HAProxy config...")
-        backup_path = self._backup_file(config.haproxy_cfg)
+        if not config.use_haproxy:
+            log("HAProxy not used for this transport; nothing to change")
+            return True
 
-        log("Generating HAProxy configuration...")
-        rendered = self._template_render(
-            str(self.TEMPLATE_PATH),
-            {
-                "domain1": config.domain1,
-                "domain2": config.domain2,
-                "reality_domain": config.reality_domain,
-            },
-        )
-
-        log(f"Writing HAProxy config to {config.haproxy_cfg}...")
-        self._write_file(config.haproxy_cfg, rendered, mode=0o644)
-
-        log("Testing HAProxy configuration...")
-        result = self._run_cmd(["haproxy", "-c", "-f", config.haproxy_cfg], check=False)
-        if result.returncode != 0:
-            # Restore backup on failure
-            if backup_path:
-                self._restore_backup(config.haproxy_cfg)
-            raise RuntimeError(f"HAProxy config test failed: {result.stderr}")
-
-        log("HAProxy configuration test passed")
-
-        # Reload HAProxy so the new config takes effect immediately
-        # (on re-runs the services step may be skipped, so we reload here)
-        log("Restarting HAProxy...")
-        if not self._systemctl("restart", "haproxy"):
-            raise RuntimeError("Failed to restart HAProxy - check 'journalctl -u haproxy'")
-        await asyncio.sleep(2)
-        if not self._is_service_active("haproxy"):
-            if backup_path:
-                log("HAProxy failed with new config - restoring backup...")
-                self._restore_backup(config.haproxy_cfg)
-                self._systemctl("restart", "haproxy")
-            raise RuntimeError("HAProxy did not come back up after restart")
-        log("  ✓ HAProxy active with new configuration")
+        log(f"Checking HAProxy config at {config.haproxy_cfg}...")
+        manager = HAProxyManager(config)
+        result = manager.apply()
+        if not result.changed:
+            log("HAProxy configuration already contains the correct VPN block")
+            return True
+        if result.migrated_v1:
+            log("Migrated the old v1 HAProxy layout (backup kept)")
+        log(f"Managed block {'added' if result.block_created else 'updated'}; "
+            f"backup: {result.backup or 'none'}")
+        log("  ✓ HAProxy reloaded; all pre-existing sections were preserved")
         return True
 
     async def rollback(self, config: InstallConfig, rollback_data: dict) -> bool:
-        """Restore HAProxy config from backup."""
-        backup_path = rollback_data.get("backup_path")
-        if backup_path and Path(backup_path).exists():
-            self.logger.info("Restoring HAProxy config from backup...")
-            return self._restore_backup(config.haproxy_cfg)
-        return False
+        manager = HAProxyManager(config)
+        return manager.remove()
