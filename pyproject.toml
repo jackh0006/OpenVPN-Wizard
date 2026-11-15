@@ -7,7 +7,7 @@ name = "vpn-installer"
 version = "2.2.1"
 description = "OpenVPN Wizard - hardened, non-destructive OpenVPN with optional HAProxy multiplexing"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "jackh0006", email = "jackh109867@gmail.com"}
 ]
@@ -20,7 +20,6 @@ keywords = [
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: System Administrators",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",

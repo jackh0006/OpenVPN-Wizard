@@ -65,7 +65,7 @@ class WelcomeScreen:
         # Architecture diagram
         arch = Panel(
             Align.center(
-                "[bold]Client[/bold] → [primary]TCP/443[/primary] → [bold]HAProxy[/bold] (optional)\n\n"
+                "[bold]Client[/bold] → [primary]your chosen TCP port[/primary] → [bold]HAProxy[/bold] (optional)\n\n"
                 "    ├─ no TLS ClientHello → [success]OpenVPN[/success] (127.0.0.1:1194)\n"
                 "    ├─ known SNI → [info]optional VLESS/Reality[/info] (loopback)\n"
                 "    └─ anything else → [success]OpenVPN[/success]\n\n"
