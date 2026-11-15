@@ -43,6 +43,7 @@ from steps.openvpn import OpenVPNStep
 from steps.packages import PackagesStep
 from steps.pam import PAMStep
 from steps.pki import PKIStep
+from steps.preflight import PreflightStep
 from steps.services import ServicesStep
 from steps.user_db import UserDBStep
 from steps.xui import XUIStep
@@ -57,7 +58,7 @@ from ui.screens.welcome import WelcomeScreen
 from utils.download import serve_once
 from validation.checklist import run_validation
 
-VERSION = "2.2.0"
+VERSION = "2.2.1"
 
 app = typer.Typer(
     name="vpn-installer",
@@ -72,6 +73,7 @@ def _version_callback(value: bool) -> None:
     if value:
         try:
             from importlib.metadata import version as pkg_version
+
             v = pkg_version("vpn-installer")
         except Exception:
             v = VERSION
@@ -83,7 +85,11 @@ def _version_callback(value: bool) -> None:
 @app.callback()
 def main(
     version: bool = typer.Option(
-        False, "--version", "-V", callback=_version_callback, is_eager=True,
+        False,
+        "--version",
+        "-V",
+        callback=_version_callback,
+        is_eager=True,
         help="Show version and exit.",
     ),
 ):
@@ -95,13 +101,21 @@ def main(
 
 def _print_error(exc: Exception) -> None:
     if isinstance(exc, InstallerError):
-        console.print(Panel(format_error(exc, get_log_path()),
-                            title="[error]Error[/error]", border_style="error"))
+        console.print(
+            Panel(
+                format_error(exc, get_log_path()),
+                title="[error]Error[/error]",
+                border_style="error",
+            )
+        )
     else:
-        console.print(Panel(
-            f"[bold red]{exc}[/bold red]\n\nFull log: {get_log_path()}",
-            title="[error]Error[/error]", border_style="error",
-        ))
+        console.print(
+            Panel(
+                f"[bold red]{exc}[/bold red]\n\nFull log: {get_log_path()}",
+                title="[error]Error[/error]",
+                border_style="error",
+            )
+        )
 
 
 def _guard(coro) -> None:
@@ -109,25 +123,33 @@ def _guard(coro) -> None:
     try:
         asyncio.run(coro)
     except InstallerError as exc:
-        console.print(Panel(format_error(exc, get_log_path()),
-                            title="[error]Installation stopped[/error]",
-                            border_style="error"))
+        console.print(
+            Panel(
+                format_error(exc, get_log_path()),
+                title="[error]Installation stopped[/error]",
+                border_style="error",
+            )
+        )
         raise typer.Exit(1)
     except KeyboardInterrupt:
         console.print("\n[warning]Interrupted. State was saved; resume with --resume.[/warning]")
         raise typer.Exit(130)
     except Exception as exc:  # last-resort readability
-        console.print(Panel(
-            f"[bold red]Unexpected error:[/bold red] {exc}\n\n"
-            f"Full log: {get_log_path()}\n"
-            "Nothing outside the installer's own managed files was removed.",
-            title="[error]Error[/error]", border_style="error",
-        ))
+        console.print(
+            Panel(
+                f"[bold red]Unexpected error:[/bold red] {exc}\n\n"
+                f"Full log: {get_log_path()}\n"
+                "Nothing outside the installer's own managed files was removed.",
+                title="[error]Error[/error]",
+                border_style="error",
+            )
+        )
         raise typer.Exit(1)
 
 
-def _make_users(prefix: str, count: int, password: Optional[str],
-                auth_mode: str) -> List[ClientSpec]:
+def _make_users(
+    prefix: str, count: int, password: Optional[str], auth_mode: str
+) -> List[ClientSpec]:
     names = [f"{prefix}-{i:02d}" for i in range(1, count + 1)] if count > 1 else [prefix]
     users = []
     for index, raw_name in enumerate(names):
@@ -172,11 +194,10 @@ def _config_from_options(
     duplicate_cn: bool = False,
 ) -> InstallConfig:
     from utils.system import get_public_ip
+
     server_ip = (server_ip or get_public_ip() or "").strip()
     if not server_ip:
-        raise typer.BadParameter(
-            "Could not detect the server IP. Provide --server-ip explicitly."
-        )
+        raise typer.BadParameter("Could not detect the server IP. Provide --server-ip explicitly.")
     endpoint_mode = "domain" if domain else "ip"
     endpoint_host = domain.strip().lower() if domain else server_ip
 
@@ -187,16 +208,22 @@ def _config_from_options(
         users = []
         for index, raw in enumerate(names):
             name = sanitize_profile_name(raw)
-            users.append(ClientSpec(
-                name=name,
-                username=sanitize_cert_name(name),
-                password=(password if (password and len(names) == 1) else (
-                    generate_password() if auth_mode == "userpass" else ""
-                )),
-            ))
+            users.append(
+                ClientSpec(
+                    name=name,
+                    username=sanitize_cert_name(name),
+                    password=(
+                        password
+                        if (password and len(names) == 1)
+                        else (generate_password() if auth_mode == "userpass" else "")
+                    ),
+                )
+            )
     else:
         if password and profiles > 1:
-            raise typer.BadParameter("Use --password only with a single profile, or omit it to auto-generate.")
+            raise typer.BadParameter(
+                "Use --password only with a single profile, or omit it to auto-generate."
+            )
         users = _make_users(prefix, profiles, password or None, auth_mode)
 
     config = InstallConfig(
@@ -275,7 +302,10 @@ class Installer:
         self.last_error: str = ""
 
     def build_steps(self, config: InstallConfig) -> list:
-        steps = [("packages", "Install system packages", PackagesStep())]
+        steps = [
+            ("preflight", "Safety preflight (read-only)", PreflightStep()),
+            ("packages", "Install system packages", PackagesStep()),
+        ]
         if config.use_haproxy:
             steps.append(("haproxy", "Add VPN listener to HAProxy", HAProxyStep()))
         if config.enable_vless:
@@ -315,7 +345,10 @@ class Installer:
 
     async def run_installation(self, already_done: set = None) -> bool:
         screen = ProgressScreen(
-            self.console, self.steps, self.config, self.state,
+            self.console,
+            self.steps,
+            self.config,
+            self.state,
             already_done=already_done or set(),
         )
         success = await screen.run()
@@ -355,10 +388,15 @@ class Installer:
     def console(self) -> Console:
         return console
 
-    async def run_full(self, *, non_interactive: bool = False,
-                       skip_validation: bool = False, resume: bool = False,
-                       config: Optional[InstallConfig] = None,
-                       assume_yes: bool = False) -> None:
+    async def run_full(
+        self,
+        *,
+        non_interactive: bool = False,
+        skip_validation: bool = False,
+        resume: bool = False,
+        config: Optional[InstallConfig] = None,
+        assume_yes: bool = False,
+    ) -> None:
         if resume:
             saved = self.state_manager.load()
             if saved and saved.config:
@@ -412,11 +450,17 @@ class Installer:
 
         if not await self.run_installation(already_done=already_done):
             if self.last_error:
-                console.print(Panel(self.last_error,
-                                    title="[error]Installation stopped[/error]",
-                                    border_style="error"))
+                console.print(
+                    Panel(
+                        self.last_error,
+                        title="[error]Installation stopped[/error]",
+                        border_style="error",
+                    )
+                )
             else:
-                console.print("[red]Installation failed. The live system was rolled back where possible.[/red]")
+                console.print(
+                    "[red]Installation failed. The live system was rolled back where possible.[/red]"
+                )
             await self.run_goodbye()
             return
 
@@ -437,13 +481,18 @@ class Installer:
 
 @app.command()
 def install(
-    non_interactive: bool = typer.Option(False, "--non-interactive", "-n",
-                                         help="No prompts; use the CLI options below."),
+    non_interactive: bool = typer.Option(
+        False, "--non-interactive", "-n", help="No prompts; use the CLI options below."
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Assume yes for confirmations."),
     skip_validation: bool = typer.Option(False, "--skip-validation"),
     resume: bool = typer.Option(False, "--resume", help="Resume a previously saved install."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Render everything to a directory; change nothing."),
-    output: Path = typer.Option(Path("./vpn-plan"), "--output", "-o", help="Directory for --dry-run."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Render everything to a directory; change nothing."
+    ),
+    output: Path = typer.Option(
+        Path("./vpn-plan"), "--output", "-o", help="Directory for --dry-run."
+    ),
     server_ip: str = typer.Option("", "--server-ip", help="Public IPv4/IPv6 address."),
     domain: str = typer.Option("", "--domain", help="Domain clients connect to."),
     port: int = typer.Option(443, "--port", help="Public port (1-65535)."),
@@ -452,17 +501,25 @@ def install(
     access_mode: str = typer.Option("free", "--access", help="free or locked."),
     prefix: str = typer.Option("MHH06", "--prefix", help="Profile name prefix."),
     profiles: int = typer.Option(3, "--profiles", help="Number of unique profiles."),
-    users: str = typer.Option("", "--users", help="Comma-separated profile names (overrides --profiles)."),
+    users: str = typer.Option(
+        "", "--users", help="Comma-separated profile names (overrides --profiles)."
+    ),
     password: str = typer.Option("", "--password", help="Password for a single profile only."),
-    no_haproxy: bool = typer.Option(False, "--no-haproxy", help="Bind OpenVPN directly instead of via HAProxy."),
-    enable_vless: bool = typer.Option(False, "--enable-vless", help="Advanced: multiplex VLESS/Reality on 443/TCP."),
+    no_haproxy: bool = typer.Option(
+        False, "--no-haproxy", help="Bind OpenVPN directly instead of via HAProxy."
+    ),
+    enable_vless: bool = typer.Option(
+        False, "--enable-vless", help="Advanced: multiplex VLESS/Reality on 443/TCP."
+    ),
     domain1: str = typer.Option("", "--domain1"),
     domain2: str = typer.Option("", "--domain2"),
     reality_domain: str = typer.Option("", "--reality-domain"),
     admin_user: str = typer.Option("admin", "--admin-user"),
     admin_pass: str = typer.Option("", "--admin-pass"),
     no_detect: bool = typer.Option(False, "--no-detect", help="Ignore an existing OpenVPN config."),
-    enable_ipv6: bool = typer.Option(False, "--enable-ipv6", help="Keep host IPv6 enabled (default: disabled)."),
+    enable_ipv6: bool = typer.Option(
+        False, "--enable-ipv6", help="Keep host IPv6 enabled (default: disabled)."
+    ),
     tun_mtu: int = typer.Option(1400, "--tun-mtu"),
     mssfix: int = typer.Option(1360, "--mssfix"),
     sndbuf: int = typer.Option(524288, "--sndbuf"),
@@ -478,67 +535,121 @@ def install(
     if dry_run:
         if non_interactive:
             config = _config_from_options(
-                server_ip=server_ip, domain=domain, port=port, proto=proto,
-                auth_mode=auth_mode, access_mode=access_mode, prefix=prefix,
-                profiles=profiles, users_raw=users, password=password,
-                no_haproxy=no_haproxy, enable_vless=enable_vless,
-                domain1=domain1, domain2=domain2, reality_domain=reality_domain,
-                admin_user=admin_user, admin_pass=admin_pass,
-                detect_existing=not no_detect, ipv6_enabled=enable_ipv6,
-                tun_mtu=tun_mtu, mssfix=mssfix, sndbuf=sndbuf, rcvbuf=rcvbuf,
-                auth_digest=auth_digest, tls_min=tls_min, tls_max=tls_max,
-                internal_port=internal_port, verify_client_cert=verify_client_cert,
+                server_ip=server_ip,
+                domain=domain,
+                port=port,
+                proto=proto,
+                auth_mode=auth_mode,
+                access_mode=access_mode,
+                prefix=prefix,
+                profiles=profiles,
+                users_raw=users,
+                password=password,
+                no_haproxy=no_haproxy,
+                enable_vless=enable_vless,
+                domain1=domain1,
+                domain2=domain2,
+                reality_domain=reality_domain,
+                admin_user=admin_user,
+                admin_pass=admin_pass,
+                detect_existing=not no_detect,
+                ipv6_enabled=enable_ipv6,
+                tun_mtu=tun_mtu,
+                mssfix=mssfix,
+                sndbuf=sndbuf,
+                rcvbuf=rcvbuf,
+                auth_digest=auth_digest,
+                tls_min=tls_min,
+                tls_max=tls_max,
+                internal_port=internal_port,
+                verify_client_cert=verify_client_cert,
                 duplicate_cn=duplicate_cn,
             )
             result = build_plan(config, output)
-            console.print(Panel(
-                f"[bold]Rendered to:[/bold] {result['output_dir']}\n"
-                f"[bold]Server:[/bold] {result['server_conf']}\n"
-                f"[bold]Profiles:[/bold] {len(result['profiles'])}\n"
-                + ("\n".join(f"  • {p}" for p in result["problems"])
-                   if result["problems"] else "[success]✓ Validation passed[/success]"),
-                title="[primary]Dry run[/primary]", border_style="primary",
-            ))
+            console.print(
+                Panel(
+                    f"[bold]Rendered to:[/bold] {result['output_dir']}\n"
+                    f"[bold]Server:[/bold] {result['server_conf']}\n"
+                    f"[bold]Profiles:[/bold] {len(result['profiles'])}\n"
+                    + (
+                        "\n".join(f"  • {p}" for p in result["problems"])
+                        if result["problems"]
+                        else "[success]✓ Validation passed[/success]"
+                    ),
+                    title="[primary]Dry run[/primary]",
+                    border_style="primary",
+                )
+            )
             raise typer.Exit(1 if result["problems"] else 0)
+
         async def _interactive_plan():
             from ui.screens.parameters import ParameterScreen
+
             cfg = await ParameterScreen(console).run()
             if not cfg:
                 return
             result = build_plan(cfg, output)
-            console.print(Panel(
-                f"[bold]Rendered to:[/bold] {result['output_dir']}\n"
-                f"[bold]Profiles:[/bold] {len(result['profiles'])}",
-                title="[primary]Dry run[/primary]", border_style="primary",
-            ))
+            console.print(
+                Panel(
+                    f"[bold]Rendered to:[/bold] {result['output_dir']}\n"
+                    f"[bold]Profiles:[/bold] {len(result['profiles'])}",
+                    title="[primary]Dry run[/primary]",
+                    border_style="primary",
+                )
+            )
+
         _guard(_interactive_plan())
         return
 
     config = None
     if non_interactive and not resume:
         config = _config_from_options(
-            server_ip=server_ip, domain=domain, port=port, proto=proto,
-            auth_mode=auth_mode, access_mode=access_mode, prefix=prefix,
-            profiles=profiles, users_raw=users, password=password,
-            no_haproxy=no_haproxy, enable_vless=enable_vless,
-            domain1=domain1, domain2=domain2, reality_domain=reality_domain,
-            admin_user=admin_user, admin_pass=admin_pass,
-            detect_existing=not no_detect, ipv6_enabled=enable_ipv6,
-            tun_mtu=tun_mtu, mssfix=mssfix, sndbuf=sndbuf, rcvbuf=rcvbuf,
-            auth_digest=auth_digest, tls_min=tls_min, tls_max=tls_max,
-            internal_port=internal_port, verify_client_cert=verify_client_cert,
+            server_ip=server_ip,
+            domain=domain,
+            port=port,
+            proto=proto,
+            auth_mode=auth_mode,
+            access_mode=access_mode,
+            prefix=prefix,
+            profiles=profiles,
+            users_raw=users,
+            password=password,
+            no_haproxy=no_haproxy,
+            enable_vless=enable_vless,
+            domain1=domain1,
+            domain2=domain2,
+            reality_domain=reality_domain,
+            admin_user=admin_user,
+            admin_pass=admin_pass,
+            detect_existing=not no_detect,
+            ipv6_enabled=enable_ipv6,
+            tun_mtu=tun_mtu,
+            mssfix=mssfix,
+            sndbuf=sndbuf,
+            rcvbuf=rcvbuf,
+            auth_digest=auth_digest,
+            tls_min=tls_min,
+            tls_max=tls_max,
+            internal_port=internal_port,
+            verify_client_cert=verify_client_cert,
             duplicate_cn=duplicate_cn,
         )
-    _guard(Installer().run_full(
-        non_interactive=non_interactive or bool(config), skip_validation=skip_validation,
-        resume=resume, config=config, assume_yes=yes,
-    ))
+    _guard(
+        Installer().run_full(
+            non_interactive=non_interactive or bool(config),
+            skip_validation=skip_validation,
+            resume=resume,
+            config=config,
+            assume_yes=yes,
+        )
+    )
 
 
 @app.command()
 def plan(
-    output_dir: Path = typer.Option(Path("./vpn-plan"), "--output", "-o",
-                                    help="Directory for rendered files."),
+    output_dir: Path = typer.Option(
+        Path("./vpn-plan"), "--output", "-o", help="Directory for rendered files."
+    ),
     server_ip: str = typer.Option("198.51.100.10", "--server-ip"),
     domain: str = typer.Option("", "--domain"),
     port: int = typer.Option(443, "--port"),
@@ -568,15 +679,32 @@ def plan(
 ):
     """Render everything to a directory without changing the system (safe test)."""
     config = _config_from_options(
-        server_ip=server_ip, domain=domain, port=port, proto=proto,
-        auth_mode=auth_mode, access_mode=access_mode, prefix=prefix,
-        profiles=profiles, users_raw=users, no_haproxy=no_haproxy,
-        enable_vless=enable_vless, domain1=domain1, domain2=domain2,
-        reality_domain=reality_domain, detect_existing=not no_detect,
-        ipv6_enabled=enable_ipv6, tun_mtu=tun_mtu, mssfix=mssfix,
-        sndbuf=sndbuf, rcvbuf=rcvbuf, auth_digest=auth_digest,
-        tls_min=tls_min, tls_max=tls_max, internal_port=internal_port,
-        verify_client_cert=verify_client_cert, duplicate_cn=duplicate_cn,
+        server_ip=server_ip,
+        domain=domain,
+        port=port,
+        proto=proto,
+        auth_mode=auth_mode,
+        access_mode=access_mode,
+        prefix=prefix,
+        profiles=profiles,
+        users_raw=users,
+        no_haproxy=no_haproxy,
+        enable_vless=enable_vless,
+        domain1=domain1,
+        domain2=domain2,
+        reality_domain=reality_domain,
+        detect_existing=not no_detect,
+        ipv6_enabled=enable_ipv6,
+        tun_mtu=tun_mtu,
+        mssfix=mssfix,
+        sndbuf=sndbuf,
+        rcvbuf=rcvbuf,
+        auth_digest=auth_digest,
+        tls_min=tls_min,
+        tls_max=tls_max,
+        internal_port=internal_port,
+        verify_client_cert=verify_client_cert,
+        duplicate_cn=duplicate_cn,
     )
     try:
         result = build_plan(config, output_dir)
@@ -595,8 +723,7 @@ def plan(
         table.add_row("HAProxy block", result["haproxy_block"])
     if strategy:
         table.add_row("HAProxy action", f"{strategy.get('action')}: {strategy.get('reason')}")
-    console.print(Panel(table, title="[primary]Dry-run plan[/primary]",
-                        border_style="primary"))
+    console.print(Panel(table, title="[primary]Dry-run plan[/primary]", border_style="primary"))
     if result["problems"]:
         console.print("[error]Validation problems:[/error]")
         for problem in result["problems"]:
@@ -684,29 +811,35 @@ def download(
             _print_error(exc)
             raise typer.Exit(1)
         return
-    console.print(Panel(
-        f"[bold]Profile:[/bold] {path}\n\n"
-        f"[bold]Download from your device:[/bold]\n"
-        f"  scp root@{config.remote_host}:{path} ~/Downloads/\n\n"
-        f"[bold]One-time HTTPS link:[/bold]\n"
-        f"  sudo vpn-installer download {name} --serve\n\n"
-        f"[dim]Or print it through SSH:[/dim]\n"
-        f"  ssh root@{config.remote_host} 'vpn-installer download {name} --print' > {name}.ovpn",
-        title="[primary]Download[/primary]", border_style="primary",
-    ))
+    console.print(
+        Panel(
+            f"[bold]Profile:[/bold] {path}\n\n"
+            f"[bold]Download from your device:[/bold]\n"
+            f"  scp root@{config.remote_host}:{path} ~/Downloads/\n\n"
+            f"[bold]One-time HTTPS link:[/bold]\n"
+            f"  sudo vpn-installer download {name} --serve\n\n"
+            f"[dim]Or print it through SSH:[/dim]\n"
+            f"  ssh root@{config.remote_host} 'vpn-installer download {name} --print' > {name}.ovpn",
+            title="[primary]Download[/primary]",
+            border_style="primary",
+        )
+    )
 
 
 @app.command()
 def doctor():
     """Diagnose common problems and print exact fixes."""
     from validation.doctor import run_doctor
+
     ok = run_doctor(console)
     raise typer.Exit(0 if ok else 1)
 
 
 @app.command()
 def uninstall(
-    purge: bool = typer.Option(False, "--purge", help="Also delete certificates, profiles and the user database."),
+    purge: bool = typer.Option(
+        False, "--purge", help="Also delete certificates, profiles and the user database."
+    ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation."),
 ):
     """Detach the VPN safely. Existing unrelated services are never modified."""
@@ -715,16 +848,22 @@ def uninstall(
         console.print("[red]No installation found.[/red]")
         raise typer.Exit(1)
     config = state.config
-    console.print(Panel(
-        "[bold]This will:[/bold]\n"
-        "• stop and disable the OpenVPN service\n"
-        "• remove ONLY the OpenVPN Wizard block from HAProxy\n"
-        "• remove ONLY the firewall rules it added\n"
-        + ("• delete certificates, profiles and the user database (--purge)\n" if purge else
-           "• keep certificates, profiles and the user database\n") +
-        "\n[bold]It will NOT:[/bold] remove packages, wipe HAProxy, flush iptables, or touch other services.",
-        title="[warning]Uninstall[/warning]", border_style="warning",
-    ))
+    console.print(
+        Panel(
+            "[bold]This will:[/bold]\n"
+            "• stop and disable the OpenVPN service\n"
+            "• remove ONLY the OpenVPN Wizard block from HAProxy\n"
+            "• remove ONLY the firewall rules it added\n"
+            + (
+                "• delete certificates, profiles and the user database (--purge)\n"
+                if purge
+                else "• keep certificates, profiles and the user database\n"
+            )
+            + "\n[bold]It will NOT:[/bold] remove packages, wipe HAProxy, flush iptables, or touch other services.",
+            title="[warning]Uninstall[/warning]",
+            border_style="warning",
+        )
+    )
     if not yes and not typer.confirm("Continue?"):
         raise typer.Exit(0)
 
@@ -742,6 +881,7 @@ async def _do_uninstall(config: InstallConfig, purge: bool) -> None:
     console.print(f"Stopping {service}...")
     for action in ("stop", "disable"):
         import subprocess
+
         subprocess.run(["systemctl", action, service], capture_output=True, check=False)
 
     if config.use_haproxy:
@@ -786,12 +926,15 @@ async def _do_uninstall(config: InstallConfig, purge: bool) -> None:
 @app.command()
 def version():
     """Show version information."""
-    console.print(Panel(
-        f"[bold]OpenVPN Wizard[/bold]\nVersion: {VERSION}\n"
-        "Made by jackh0006 • jackh109867@gmail.com\n\n"
-        "Open source • No tracking • No telemetry",
-        title="About", border_style="blue",
-    ))
+    console.print(
+        Panel(
+            f"[bold]OpenVPN Wizard[/bold]\nVersion: {VERSION}\n"
+            "Made by jackh0006 • jackh109867@gmail.com\n\n"
+            "Open source • No tracking • No telemetry",
+            title="About",
+            border_style="blue",
+        )
+    )
 
 
 if __name__ == "__main__":
