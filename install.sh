@@ -64,6 +64,14 @@ python3 -m venv "$VENV_DIR"
 ln -sf "$VENV_DIR/bin/vpn-installer" /usr/local/bin/vpn-installer
 ok "Installed: $(command -v vpn-installer)"
 
+# When launched with `curl ... | sudo bash`, stdin is the downloaded script
+# and is already exhausted by the time the Rich wizard starts. Reattach the
+# user's terminal so the interactive menu can receive answers. This does not
+# affect --non-interactive automation.
+if [[ ! -t 0 && -r /dev/tty ]]; then
+    exec </dev/tty
+fi
+
 case "${1:-}" in
     --uninstall)
         shift
