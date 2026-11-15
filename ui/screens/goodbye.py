@@ -16,8 +16,8 @@ class GoodbyeScreen:
         self.config = config
 
     async def run(self):
-        self.console.print(f"[primary]{SMALL_LOGO}[/primary]")
         if self.config:
+            self.console.print(f"[primary]{SMALL_LOGO}[/primary]")
             example = self.config.users[0].name if self.config.users else "MHH06-01"
             self.console.print(InfoBox(
                 "success", "Summary", "Your VPN is configured.",
@@ -40,6 +40,8 @@ class GoodbyeScreen:
                 ],
             ).render())
 
-        self.console.print(CreditsFooter.render())
-        self.console.print()
-        self.console.print("[dim]Goodbye. Your traffic is yours alone.[/dim]")
+            self.console.print(CreditsFooter.render())
+            self.console.print()
+            self.console.print("[dim]Setup is complete. Your traffic is yours alone.[/dim]")
+        else:
+            self.console.print("[dim]Exited before installation. No VPN, HAProxy, firewall, or service changes were made.[/dim]")
