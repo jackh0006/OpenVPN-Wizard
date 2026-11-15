@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable
 
 from core.config import InstallConfig
-from core.exceptions import ServiceError, SystemError
+from core.exceptions import PortConflictError, ServiceError, SystemError
 from core.render import render_server_conf, validate_rendered_server, utc_now
 from steps.base import BaseStep
 
@@ -42,20 +42,38 @@ class OpenVPNStep(BaseStep):
         # wizard are actually applied (ports, protocol, auth, access policy).
         return False
 
-    async def execute(self, config: InstallConfig,
-                      output_callback: Callable[[str], None] = None) -> bool:
+    async def execute(
+        self, config: InstallConfig, output_callback: Callable[[str], None] = None
+    ) -> bool:
         def log(msg: str):
             if output_callback:
                 output_callback(msg)
             self.logger.info(msg)
 
         conf_path = Path(config.openvpn_dir) / "server.conf"
+        # Detect a collision before changing the live configuration. An
+        # existing OpenVPN listener is safe to reconfigure; every other owner
+        # gets an explicit, non-destructive error instead of a failed restart.
+        from utils.net import inspect_port
+
+        port_status = inspect_port(config.openvpn_listen_port)
+        owners = " ".join((port_status.tcp_owner, port_status.udp_owner)).lower()
+        if not port_status.available and "openvpn" not in owners:
+            raise PortConflictError(
+                config.openvpn_listen_port,
+                port_status.description,
+                fix_hint=(
+                    "Choose another port with --port or --internal-port. "
+                    "The wizard will not stop or change another service."
+                ),
+            )
         conf_path.parent.mkdir(parents=True, exist_ok=True)
         Path("/var/log/openvpn").mkdir(parents=True, exist_ok=True)
         Path("/var/lib/openvpn").mkdir(parents=True, exist_ok=True)
         Path("/run/openvpn").mkdir(parents=True, exist_ok=True)
         try:
             import os
+
             os.chmod("/var/log/openvpn", 0o750)
             os.chmod("/var/lib/openvpn", 0o755)
             os.chmod(config.openvpn_dir, 0o750)
@@ -191,6 +209,7 @@ ReadWritePaths=/var/log/openvpn /var/lib/openvpn /run/openvpn
 
     async def _wait_for_port(self, port: int, host: str, attempts: int = 15) -> bool:
         import socket
+
         for _ in range(attempts):
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -204,9 +223,7 @@ ReadWritePaths=/var/log/openvpn /var/lib/openvpn /run/openvpn
 
     async def _wait_for_udp_port(self, port: int, attempts: int = 15) -> bool:
         for _ in range(attempts):
-            result = self._run_cmd(
-                ["ss", "-lunH", f"sport = :{port}"], check=False
-            )
+            result = self._run_cmd(["ss", "-lunH", f"sport = :{port}"], check=False)
             if result.returncode == 0 and result.stdout.strip():
                 return True
             await asyncio.sleep(1)

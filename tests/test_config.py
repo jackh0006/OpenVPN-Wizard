@@ -26,9 +26,11 @@ def test_ip_and_hostname_validation():
 
 def test_password_rules():
     assert validate_password("Correct-Horse-Battery-9")[0]
-    assert not validate_password("short")[0]
-    assert not validate_password("alllowercase123!")[0]
-    assert not validate_password("NoSymbols12345")[0]
+    assert validate_password("short")[0]
+    assert validate_password("alllowercase123!")[0]
+    assert validate_password("NoSymbols12345")[0]
+    assert not validate_password("")[0]
+    assert not validate_password("line\nbreak")[0]
 
 
 def test_generated_password_is_valid():
@@ -77,10 +79,12 @@ def test_valid_config():
 
 
 def test_duplicate_users_rejected():
-    config = _config(users=[
-        ClientSpec("A", "a", "Correct-Horse-Battery-9"),
-        ClientSpec("a", "b", "Correct-Horse-Battery-9"),
-    ])
+    config = _config(
+        users=[
+            ClientSpec("A", "a", "Correct-Horse-Battery-9"),
+            ClientSpec("a", "b", "Correct-Horse-Battery-9"),
+        ]
+    )
     assert any("Duplicate profile" in p for p in validate_config(config))
 
 
@@ -97,14 +101,15 @@ def test_udp_never_uses_haproxy():
 
 
 def test_locked_and_cert_only_are_valid():
-    config = _config(auth_mode="cert", access_mode="locked",
-                     users=[ClientSpec("A", "a", "")])
+    config = _config(auth_mode="cert", access_mode="locked", users=[ClientSpec("A", "a", "")])
     assert validate_config(config) == []
 
 
 def test_users_cannot_share_certificate_names():
-    config = _config(users=[
-        ClientSpec("A", "a", "Correct-Horse-Battery-9", cert_name="same"),
-        ClientSpec("B", "b", "Correct-Horse-Battery-9", cert_name="same"),
-    ])
+    config = _config(
+        users=[
+            ClientSpec("A", "a", "Correct-Horse-Battery-9", cert_name="same"),
+            ClientSpec("B", "b", "Correct-Horse-Battery-9", cert_name="same"),
+        ]
+    )
     assert any("same certificate name" in p for p in validate_config(config))

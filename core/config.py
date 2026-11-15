@@ -25,13 +25,19 @@ DEFAULT_DNS2 = "149.112.112.112"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 HOSTNAME_RE = re.compile(
-    r"^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+"
-    r"[a-zA-Z]{2,63}$"
+    r"^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+" r"[a-zA-Z]{2,63}$"
 )
 PASSWORD_SPECIALS = r"""!@#$%^&*()_+\-=\[\]{}|;:,.<>?/~`'" """
 
 RESERVED_PROFILE_NAMES = {
-    "con", "prn", "aux", "nul", "server", "ca", "crl", "ta",
+    "con",
+    "prn",
+    "aux",
+    "nul",
+    "server",
+    "ca",
+    "crl",
+    "ta",
 }
 
 
@@ -39,10 +45,10 @@ RESERVED_PROFILE_NAMES = {
 class ClientSpec:
     """One human being / device that receives its own .ovpn profile."""
 
-    name: str                      # Profile name shown in OpenVPN Connect
-    username: str                  # Linux/PAM account and certificate CN
-    password: str = ""             # Only used when auth_mode == "userpass"
-    cert_name: str = ""            # Defaults to username
+    name: str  # Profile name shown in OpenVPN Connect
+    username: str  # Linux/PAM account and certificate CN
+    password: str = ""  # Only used when auth_mode == "userpass"
+    cert_name: str = ""  # Defaults to username
 
     def __post_init__(self) -> None:
         self.name = self.name.strip()
@@ -61,19 +67,19 @@ class InstallConfig:
 
     # ── Required identity ────────────────────────────────────────────────
     server_ip: str = ""
-    endpoint_mode: str = "ip"          # "ip" | "domain"
-    endpoint_host: str = ""            # What clients put in `remote`
-    domain: str = ""                   # Only when endpoint_mode == "domain"
+    endpoint_mode: str = "ip"  # "ip" | "domain"
+    endpoint_host: str = ""  # What clients put in `remote`
+    domain: str = ""  # Only when endpoint_mode == "domain"
 
     # ── Transport ────────────────────────────────────────────────────────
-    vpn_proto: str = "tcp"             # "tcp" | "udp"
-    public_port: int = 443             # Port clients connect to
-    internal_port: int = 0            # 0 = auto-detect existing, else 1194
+    vpn_proto: str = "tcp"  # "tcp" | "udp"
+    public_port: int = 443  # Port clients connect to
+    internal_port: int = 0  # 0 = auto-detect existing, else 1194
 
     # ── Security policy ──────────────────────────────────────────────────
-    auth_mode: str = "userpass"        # "userpass" | "cert"
-    access_mode: str = "free"          # "free" | "locked"
-    ipv6_enabled: bool = False         # False = disable host IPv6 + block clients
+    auth_mode: str = "userpass"  # "userpass" | "cert"
+    access_mode: str = "free"  # "free" | "locked"
+    ipv6_enabled: bool = False  # False = disable host IPv6 + block clients
 
     # ── Profiles ─────────────────────────────────────────────────────────
     profile_prefix: str = "MHH06"
@@ -94,13 +100,13 @@ class InstallConfig:
     dns1: str = DEFAULT_DNS1
     dns2: str = DEFAULT_DNS2
     max_clients: int = 128
-    dh: str = "none"                    # "none" for ECDSA, path for RSA legacy PKI
-    server_cert_cn: str = "server"      # detected from an existing certificate
+    dh: str = "none"  # "none" for ECDSA, path for RSA legacy PKI
+    server_cert_cn: str = "server"  # detected from an existing certificate
 
     # ── Crypto / transport tuning (defaults match the working reference VPS) ──
     cipher: str = "AES-256-GCM"
     data_ciphers: str = "AES-256-GCM:CHACHA20-POLY1305:AES-128-GCM"
-    auth_digest: str = "SHA384"         # SHA384 matches the reference profiles
+    auth_digest: str = "SHA384"  # SHA384 matches the reference profiles
     tls_min: str = "1.3"
     tls_max: str = "1.3"
     tls_ciphersuites: str = "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
@@ -114,7 +120,7 @@ class InstallConfig:
     mssfix: int = 1360
     sndbuf: int = 524288
     rcvbuf: int = 524288
-    verify_client_cert: str = "require" # require | optional | none
+    verify_client_cert: str = "require"  # require | optional | none
     duplicate_cn: bool = False
 
     # ── Runtime / paths ──────────────────────────────────────────────────
@@ -129,9 +135,9 @@ class InstallConfig:
     xui_cert: str = "/etc/x-ui/cert.pem"
     xui_key: str = "/etc/x-ui/key.pem"
     reality_key_path: str = "/etc/x-ui/reality_private.key"
-    xui_inbound1_port: int = 10000      # VLESS-TLS, loopback only
-    xui_tls2_port: int = 10004          # VLESS-TLS, loopback only
-    xui_inbound2_port: int = 443        # VLESS-Reality, loopback only
+    xui_inbound1_port: int = 10000  # VLESS-TLS, loopback only
+    xui_tls2_port: int = 10004  # VLESS-TLS, loopback only
+    xui_inbound2_port: int = 443  # VLESS-Reality, loopback only
 
     # ── Behaviour ────────────────────────────────────────────────────────
     manage_haproxy: bool = True
@@ -139,7 +145,7 @@ class InstallConfig:
     wan_interface: str = ""
     server_ip_confirmed: bool = False
     non_interactive: bool = False
-    haproxy_conflict_ok: bool = False   # Reserved for future integration mode
+    haproxy_conflict_ok: bool = False  # Reserved for future integration mode
 
     def __post_init__(self) -> None:
         self.server_ip = (self.server_ip or "").strip()
@@ -164,9 +170,7 @@ class InstallConfig:
             self.domain = self.endpoint_host
         if not self.users and self.profile_prefix:
             # A single default profile keeps programmatic use simple.
-            self.users = [
-                ClientSpec(name=self.profile_prefix, username="vpnuser")
-            ]
+            self.users = [ClientSpec(name=self.profile_prefix, username="vpnuser")]
         if not self.credentials_file:
             self.credentials_file = "/root/openvpn-wizard-credentials.txt"
 
@@ -306,23 +310,20 @@ def validate_port(value: int | str) -> bool:
 
 
 def validate_password(password: str) -> tuple[bool, str]:
-    """Return (valid, human readable reason)."""
+    """Accept user-chosen passwords unless PAM's line format cannot carry them.
+
+    The wizard still generates long random passwords by default.  A manual
+    password is the owner's choice; it must only be non-empty, bounded, and
+    safe to pass to ``chpasswd`` over stdin.
+    """
     password = password or ""
-    if len(password) < 12:
-        return False, "Password must be at least 12 characters long."
+    if not password:
+        return False, "Password cannot be empty."
     if len(password) > 256:
         return False, "Password must be at most 256 characters long."
     if "\n" in password or "\r" in password or ":" in password:
         return False, "Password must not contain newlines or ':' characters."
-    if not re.search(r"[A-Z]", password):
-        return False, "Password must contain at least one uppercase letter."
-    if not re.search(r"[a-z]", password):
-        return False, "Password must contain at least one lowercase letter."
-    if not re.search(r"\d", password):
-        return False, "Password must contain at least one digit."
-    if not re.search(r"[^A-Za-z0-9]", password):
-        return False, "Password must contain at least one symbol."
-    return True, "Strong password"
+    return True, "Accepted (a long unique password is safest)."
 
 
 def validate_transport(proto: str) -> bool:
@@ -349,7 +350,7 @@ def sanitize_profile_name(name: str) -> str:
 def sanitize_cert_name(name: str) -> str:
     """Certificate CNs must be simple, lowercase and filesystem safe."""
     cleaned = re.sub(r"[^a-z0-9_-]+", "-", (name or "").strip().lower()).strip("-")
-    return (cleaned[:64] or "client")
+    return cleaned[:64] or "client"
 
 
 def validate_config(config: InstallConfig) -> List[str]:
@@ -369,6 +370,12 @@ def validate_config(config: InstallConfig) -> List[str]:
         problems.append("The public port must be between 1 and 65535.")
     if config.internal_port and not validate_port(config.internal_port):
         problems.append("The internal loopback port must be between 1 and 65535.")
+    if (
+        config.behind_haproxy
+        and config.internal_port
+        and config.internal_port == config.public_port
+    ):
+        problems.append("The internal loopback port must differ from the public port.")
     if not validate_transport(config.vpn_proto):
         problems.append("Transport must be 'tcp' or 'udp'.")
     if not validate_auth_mode(config.auth_mode):

@@ -39,7 +39,11 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          files: dist/*
+          files: |
+            dist/*
+            RELEASE_NOTES_v2.2.0.md
+            CHANGELOG.md
+            README.md
           generate_release_notes: true
           fail_on_unmatched_files: true
         env:
