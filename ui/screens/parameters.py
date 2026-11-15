@@ -32,6 +32,7 @@ from core.secrets import generate_password
 from ui.components import CreditsFooter, SectionHeader
 from ui.theme import get_console
 from utils.system import get_public_ip
+from utils.net import domain_points_to, inspect_port, suggested_ports
 
 
 class ParameterScreen:
@@ -52,7 +53,8 @@ class ParameterScreen:
             Panel(
                 "[bold]Every choice below is applied explicitly.[/bold]\n"
                 "[dim]Defaults are safe. Press Ctrl+C at any time to abort without changes.[/dim]",
-                border_style="primary", padding=(0, 2),
+                border_style="primary",
+                padding=(0, 2),
             )
         )
 
@@ -66,10 +68,13 @@ class ParameterScreen:
 
         self.console.print()
         self.console.print("[primary]How should clients reach the server?[/primary]")
-        self.console.print("  [primary]1.[/primary] Domain name (recommended; needs DNS → server IP)")
+        self.console.print(
+            "  [primary]1.[/primary] Domain name (recommended; needs DNS → server IP)"
+        )
         self.console.print("  [primary]2.[/primary] IP address only")
-        endpoint_choice = Prompt.ask("Choice", choices=["1", "2"], default="2",
-                                     console=self.console)
+        endpoint_choice = Prompt.ask(
+            "Choice", choices=["1", "2"], default="2", console=self.console
+        )
         domain = ""
         if endpoint_choice == "1":
             domain = self._ask(
@@ -79,14 +84,47 @@ class ParameterScreen:
             ).lower()
             endpoint_host = domain
             mode = "domain"
+            matches, addresses = domain_points_to(domain, server_ip)
+            if matches:
+                self.console.print(f"[success]✓ {domain} resolves to this server.[/success]")
+            else:
+                shown = ", ".join(addresses) if addresses else "no addresses"
+                self.console.print(
+                    f"[warning]{domain} currently resolves to {shown}, not {server_ip}.[/warning]"
+                )
+                if not Confirm.ask(
+                    "Use this domain anyway? DNS may still be updating",
+                    default=False,
+                    console=self.console,
+                ):
+                    endpoint_host = server_ip
+                    mode = "ip"
+                    domain = ""
+                    self.console.print(
+                        "[primary]Using the server IP instead. No domain is required.[/primary]"
+                    )
         else:
             endpoint_host = server_ip
             mode = "ip"
 
-        port = self._ask_int(
-            "Public port (443 looks like HTTPS and works through most firewalls)",
-            default="443",
-        )
+        while True:
+            port = self._ask_int(
+                "Public port (443 looks like HTTPS and works through most firewalls)", default="443"
+            )
+            status = inspect_port(port)
+            if status.available:
+                self.console.print(f"[success]✓ Port {port} is free for TCP and UDP.[/success]")
+                break
+            choices = ", ".join(str(p) for p in suggested_ports()) or "choose another custom port"
+            self.console.print(
+                f"[warning]Port {port} is {status.description}. Free choices: {choices}.[/warning]"
+            )
+            if Confirm.ask(
+                "Keep this port and let the compatibility check decide?",
+                default=False,
+                console=self.console,
+            ):
+                break
 
         self.console.print()
         proto = Prompt.ask(
@@ -98,26 +136,33 @@ class ParameterScreen:
 
         self.console.print()
         self.console.print("[primary]Authentication[/primary]")
-        self.console.print("  [primary]1.[/primary] Unique certificate + username/password (2 factors, recommended)")
+        self.console.print(
+            "  [primary]1.[/primary] Unique certificate + username/password (2 factors, recommended)"
+        )
         self.console.print("  [primary]2.[/primary] Unique certificate only (no password prompt)")
-        auth_choice = Prompt.ask("Choice", choices=["1", "2"], default="1",
-                                 console=self.console)
+        auth_choice = Prompt.ask("Choice", choices=["1", "2"], default="1", console=self.console)
         auth_mode = "userpass" if auth_choice == "1" else "cert"
 
         self.console.print()
         self.console.print("[primary]Access policy[/primary]")
-        self.console.print("  [primary]1.[/primary] Free: route all internet traffic through the VPN")
-        self.console.print("  [primary]2.[/primary] Locked: only reach the private VPN network (no internet exit)")
-        access_choice = Prompt.ask("Choice", choices=["1", "2"], default="1",
-                                   console=self.console)
+        self.console.print(
+            "  [primary]1.[/primary] Free: route all internet traffic through the VPN"
+        )
+        self.console.print(
+            "  [primary]2.[/primary] Locked: only reach the private VPN network (no internet exit)"
+        )
+        access_choice = Prompt.ask("Choice", choices=["1", "2"], default="1", console=self.console)
         access_mode = "free" if access_choice == "1" else "locked"
 
         self.console.print()
         self.console.print("[primary]IPv6[/primary]")
-        self.console.print("  [primary]1.[/primary] Disable IPv6 (recommended; matches the reference VPS, prevents leaks)")
-        self.console.print("  [primary]2.[/primary] Keep IPv6 enabled on the host (no IPv6 tunnel is provided)")
-        ipv6_choice = Prompt.ask("Choice", choices=["1", "2"], default="1",
-                                 console=self.console)
+        self.console.print(
+            "  [primary]1.[/primary] Disable IPv6 (recommended; matches the reference VPS, prevents leaks)"
+        )
+        self.console.print(
+            "  [primary]2.[/primary] Keep IPv6 enabled on the host (no IPv6 tunnel is provided)"
+        )
+        ipv6_choice = Prompt.ask("Choice", choices=["1", "2"], default="1", console=self.console)
         ipv6_enabled = ipv6_choice == "2"
 
         self.console.print()
@@ -136,7 +181,8 @@ class ParameterScreen:
             self.console.print()
             use_haproxy = Confirm.ask(
                 "Add the VPN to HAProxy's existing config (non-destructive, recommended)?",
-                default=True, console=self.console,
+                default=True,
+                console=self.console,
             )
 
         enable_vless = False
@@ -146,20 +192,27 @@ class ParameterScreen:
             self.console.print()
             enable_vless = Confirm.ask(
                 "Also multiplex VLESS/Reality on the same 443 listener? (advanced, off by default)",
-                default=False, console=self.console,
+                default=False,
+                console=self.console,
             )
             if enable_vless:
-                domain1 = self._ask("VLESS domain 1", validator=validate_hostname,
-                                    error="Invalid domain.").lower()
-                domain2 = self._ask("VLESS domain 2", validator=validate_hostname,
-                                    error="Invalid domain.").lower()
+                domain1 = self._ask(
+                    "VLESS domain 1", validator=validate_hostname, error="Invalid domain."
+                ).lower()
+                domain2 = self._ask(
+                    "VLESS domain 2", validator=validate_hostname, error="Invalid domain."
+                ).lower()
                 reality_domain = self._ask(
                     "Reality disguise domain (e.g. www.cloudflare.com)",
-                    validator=validate_hostname, error="Invalid domain.",
+                    validator=validate_hostname,
+                    error="Invalid domain.",
                 ).lower()
-                admin_user = self._ask("3X-UI admin username", default="admin",
-                                       validator=validate_username,
-                                       error="Lowercase letters/digits only.").lower()
+                admin_user = self._ask(
+                    "3X-UI admin username",
+                    default="admin",
+                    validator=validate_username,
+                    error="Lowercase letters/digits only.",
+                ).lower()
                 admin_pass = generate_password()
                 self.console.print(
                     f"[success]3X-UI admin password generated:[/success] [key]{admin_pass}[/key]"
@@ -191,15 +244,20 @@ class ParameterScreen:
             self._review(config)
             action = Prompt.ask(
                 "[primary]Action[/primary] [c]ontinue, [e]dit users, [r]estart, [q]uit",
-                choices=["c", "e", "r", "q"], default="c", console=self.console,
+                choices=["c", "e", "r", "q"],
+                default="c",
+                console=self.console,
             )
             if action == "c":
                 problems = validate_config(config)
                 if problems:
-                    self.console.print(Panel(
-                        "\n".join(f"• {p}" for p in problems),
-                        title="[error]Please fix[/error]", border_style="error",
-                    ))
+                    self.console.print(
+                        Panel(
+                            "\n".join(f"• {p}" for p in problems),
+                            title="[error]Please fix[/error]",
+                            border_style="error",
+                        )
+                    )
                     continue
                 return config
             if action == "e":
@@ -212,20 +270,22 @@ class ParameterScreen:
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
-    def _ask(self, label: str, default: str = "", validator=None,
-             error: str = "Invalid value.") -> str:
+    def _ask(
+        self, label: str, default: str = "", validator=None, error: str = "Invalid value."
+    ) -> str:
         while True:
-            value = Prompt.ask(f"[primary]{label}[/primary]", default=default,
-                               console=self.console).strip()
+            value = Prompt.ask(
+                f"[primary]{label}[/primary]", default=default, console=self.console
+            ).strip()
             if validator is None or validator(value):
                 return value
             self.console.print(f"[error]{error}[/error]")
 
-    def _ask_int(self, label: str, default: str, minimum: int = 1,
-                 maximum: int = 65535) -> int:
+    def _ask_int(self, label: str, default: str, minimum: int = 1, maximum: int = 65535) -> int:
         while True:
-            raw = Prompt.ask(f"[primary]{label}[/primary]", default=default,
-                             console=self.console).strip()
+            raw = Prompt.ask(
+                f"[primary]{label}[/primary]", default=default, console=self.console
+            ).strip()
             if validate_port(raw) and minimum <= int(raw) <= maximum:
                 return int(raw)
             self.console.print(f"[error]Enter a number between {minimum} and {maximum}.[/error]")
@@ -239,8 +299,9 @@ class ParameterScreen:
             self.console.print(f"[primary]Profile {index} of {count}[/primary]")
             default_name = f"{prefix}-{index:02d}" if count > 1 else prefix
             while True:
-                name = Prompt.ask("  Display/file name", default=default_name,
-                                  console=self.console).strip()
+                name = Prompt.ask(
+                    "  Display/file name", default=default_name, console=self.console
+                ).strip()
                 name = sanitize_profile_name(name)
                 if not validate_profile_name(name):
                     self.console.print("  [error]Invalid profile name.[/error]")
@@ -253,13 +314,20 @@ class ParameterScreen:
 
             default_user = sanitize_cert_name(name)
             while True:
-                username = Prompt.ask("  VPN username", default=default_user,
-                                      console=self.console).strip().lower()
+                username = (
+                    Prompt.ask("  VPN username", default=default_user, console=self.console)
+                    .strip()
+                    .lower()
+                )
                 if not validate_username(username):
-                    self.console.print("  [error]Use lowercase letters, digits, '-' or '_'.[/error]")
+                    self.console.print(
+                        "  [error]Use lowercase letters, digits, '-' or '_'.[/error]"
+                    )
                     continue
                 if username in used_users:
-                    self.console.print("  [error]That username is already used in this batch.[/error]")
+                    self.console.print(
+                        "  [error]That username is already used in this batch.[/error]"
+                    )
                     continue
                 break
             used_users.add(username)
@@ -270,14 +338,15 @@ class ParameterScreen:
                     "  Password: [primary]1[/primary] auto-generate strong  "
                     "[primary]2[/primary] enter manually"
                 )
-                choice = Prompt.ask("  Choice", choices=["1", "2"], default="1",
-                                    console=self.console)
+                choice = Prompt.ask(
+                    "  Choice", choices=["1", "2"], default="1", console=self.console
+                )
                 if choice == "1":
                     password = generate_password()
                     self.console.print(f"  [success]Generated:[/success] [key]{password}[/key]")
                 else:
                     while True:
-                        password = getpass.getpass("  Password (min 12 chars): ")
+                        password = getpass.getpass("  Password (any non-empty value): ")
                         ok, reason = validate_password(password)
                         if not ok:
                             self.console.print(f"  [error]{reason}[/error]")
@@ -299,14 +368,27 @@ class ParameterScreen:
         table.add_row("Endpoint", f"{config.remote_host} ({config.endpoint_mode})")
         table.add_row("Public port", f"{config.public_port}/{config.vpn_proto}")
         table.add_row("Transport", config.vpn_proto.upper())
-        table.add_row("Authentication", "certificate + password" if config.auth_mode == "userpass"
-                      else "certificate only")
-        table.add_row("Access", "free (full tunnel)" if config.free_tunnel else "locked (VPN network only)")
-        table.add_row("IPv6", "enabled on host (not tunneled)" if config.ipv6_enabled else "disabled + blocked on clients")
+        table.add_row(
+            "Authentication",
+            "certificate + password" if config.auth_mode == "userpass" else "certificate only",
+        )
+        table.add_row(
+            "Access", "free (full tunnel)" if config.free_tunnel else "locked (VPN network only)"
+        )
+        table.add_row(
+            "IPv6",
+            (
+                "enabled on host (not tunneled)"
+                if config.ipv6_enabled
+                else "disabled + blocked on clients"
+            ),
+        )
         table.add_row("MTU / MSS", f"{config.tun_mtu} / {config.mssfix}")
         table.add_row("Buffers", f"send {config.sndbuf} / receive {config.rcvbuf}")
         table.add_row("TLS / auth", f"TLS {config.tls_min}-{config.tls_max} / {config.auth_digest}")
-        table.add_row("HAProxy", "yes (managed block)" if config.use_haproxy else "no (direct bind)")
+        table.add_row(
+            "HAProxy", "yes (managed block)" if config.use_haproxy else "no (direct bind)"
+        )
         table.add_row("VLESS multiplex", "yes" if config.enable_vless else "no")
         self.console.print(Panel(table, border_style="primary"))
 

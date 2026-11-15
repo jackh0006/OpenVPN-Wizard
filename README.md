@@ -1,8 +1,8 @@
-# OpenVPN Wizard v2.1
+# OpenVPN Wizard v2.2
 
 Hardened, **non-destructive** OpenVPN deployment for Ubuntu/Debian VPS.
 
-It asks exactly what it needs — server IP, domain or IP, TCP or UDP, port,
+It asks exactly what it needs — server IP, verified domain or IP, TCP or UDP, port,
 certificate+password or certificate-only, locked or free access, profile names
 and how many users — then builds one unique `.ovpn` per user and applies only
 the changes it owns.
@@ -66,6 +66,13 @@ reference VPS: MTU 1400, MSS 1360, 512 KiB socket buffers, SHA384, TLS 1.3.
 
 It also asks whether to attach the VPN to HAProxy (TCP only) and offers the
 optional VLESS/Reality multiplexing path.
+
+Before any change, the wizard resolves a selected domain and shows whether it
+currently points to the VPS. If DNS is not ready, it asks whether to wait/use
+the domain anyway or automatically fall back to the server IP—no domain is
+required. It also inspects both TCP and UDP listeners, identifies occupied
+ports, and suggests free familiar alternatives. Every non-default choice is
+shown again for confirmation before installation.
 
 ### Non-interactive example
 

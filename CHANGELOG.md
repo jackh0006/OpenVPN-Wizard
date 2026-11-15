@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here.
 
+## [2.2.0] - 2026-11-15
+
+### Added
+- Domain-aware setup: the interactive wizard resolves a selected domain and
+  shows whether it points to the VPS. If it does not, the owner explicitly
+  chooses whether to use it anyway or fall back to the server IP.
+- Read-only TCP and UDP port inspection before setup, including the owning
+  listener details and a short list of free, familiar alternative ports.
+
+### Changed
+- Manual VPN passwords now accept any non-empty value that PAM can safely
+  receive (no newlines or `:`). Generated passwords remain long and random.
+- Direct and loopback OpenVPN listeners reject unrelated port owners before a
+  configuration is written or a service is restarted.
+
+### Security
+- The port inspector never stops, reconfigures, or probes through a service;
+  it only reads the kernel listener table. The VPN backend remains loopback
+  only when HAProxy is used.
+
 ## [2.1.0] - 2026-11-13
 
 ### Added
@@ -50,6 +70,7 @@ All notable changes to this project are documented here.
   RSA CN=ChangeMe, `verify-client-cert none`, `duplicate-cn`).
 
 [2.1.0]: https://github.com/jackh0006/OpenVPN-Wizard/compare/v2.0.0...v2.1.0
+[2.2.0]: https://github.com/jackh0006/OpenVPN-Wizard/compare/v2.1.0...v2.2.0
 
 ## [2.0.0] - 2026-11-13
 
