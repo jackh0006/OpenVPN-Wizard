@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here.
 
+## [2.2.1] - 2026-11-15
+
+### Fixed
+- A read-only preflight now runs before package installation, firewall changes,
+  HAProxy edits, or OpenVPN restarts. It refuses foreign listeners and
+  incompatible HAProxy frontends before any system state is changed.
+
 ## [2.2.0] - 2026-11-15
 
 ### Added

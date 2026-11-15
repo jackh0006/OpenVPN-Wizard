@@ -41,7 +41,7 @@ jobs:
         with:
           files: |
             dist/*
-            RELEASE_NOTES_v2.2.0.md
+            RELEASE_NOTES_v2.2.1.md
             CHANGELOG.md
             README.md
           generate_release_notes: true
