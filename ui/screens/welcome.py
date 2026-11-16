@@ -28,51 +28,40 @@ class WelcomeScreen:
         # Main logo
         self.console.print(f"[primary]{LOGO}[/primary]")
 
-        # Philosophy box
         philosophy = InfoBox(
             "tip",
-            "Our Philosophy",
-            "We build tools that respect your privacy. No tracking. No phones home. Ever.",
+            "Before you begin",
+            "You choose where people connect, then name each profile.",
             [
-                "🔒 Your data stays on YOUR server",
-                "🔍 Zero telemetry, zero analytics",
-                "📖 Completely open source (MIT licensed)",
-                "🛡️ Designed for maximum stealth & security",
-                "⚡ Optimized for speed & reliability",
-            ]
+                "1. Choose the server address and port",
+                "2. Add a name, username and password for every person or device",
+                "3. Review the plan before anything is changed",
+            ],
         )
         self.console.print()
         self.console.print(philosophy.render())
 
-        # What this installs
         features = InfoBox(
             "info",
-            "What This Installs",
-            "A hardened OpenVPN stack that asks exactly what you need",
+            "What you get",
+            "A conventional OpenVPN setup with separate access for every profile.",
             [
-                "🔐 OpenVPN - AES-256-GCM, TLS 1.2+, tls-crypt",
-                "🔑 Easy-RSA PKI - ECDSA P-384, one unique key per user",
+                "🔑 A different certificate and key for every profile",
                 "👤 Certificate + password, or certificate-only",
-                "🌐 TCP or UDP, domain or IP, any port",
-                "🔓 Free full tunnel, or locked private-network-only",
-                "🎯 HAProxy - optional, append-only, never rewrites your config",
-                "🧱 Firewall - only the required rules; IPv6 untouched",
-                "📦 SQLite metadata - PBKDF2 hashes only, never private keys",
-            ]
+                "🌐 TCP or UDP, domain or IP, and your chosen port",
+                "🧾 A clear review screen before installation",
+            ],
         )
         self.console.print(features.render())
 
-        # Architecture diagram
         arch = Panel(
             Align.center(
-                "[bold]Client[/bold] → [primary]your chosen TCP port[/primary] → [bold]HAProxy[/bold] (optional)\n\n"
-                "    ├─ no TLS ClientHello → [success]OpenVPN[/success] (127.0.0.1:1194)\n"
-                "    ├─ known SNI → [info]optional VLESS/Reality[/info] (loopback)\n"
-                "    └─ anything else → [success]OpenVPN[/success]\n\n"
-                "[dim]UDP binds directly. HAProxy gets one marked, reversible block;\n"
-                "your existing configuration is never replaced.[/dim]"
+                "[bold]Your device[/bold]  →  [primary]your address and port[/primary]  →  "
+                "[success]your VPN[/success]\n\n"
+                "[dim]Optional HAProxy uses a clearly marked block.\n"
+                "The review screen lists every planned change.[/dim]"
             ),
-            title="[primary]🏗️ Architecture[/primary]",
+            title="[primary]Connection path[/primary]",
             border_style="primary",
             padding=(1, 2),
         )
