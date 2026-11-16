@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented here.
 
+## [2.2.2] - 2026-11-16
+
+### Fixed
+- The curl-piped installer now reconnects the wizard to the caller's terminal
+  before asking questions. When no terminal is available, it exits cleanly and
+  tells the operator exactly how to continue.
+- The default TCP client profile now uses the tested reference layout and
+  directive order, including the expected TLS, buffer, and `tls-crypt` block
+  ordering.
+
+### Changed
+- The terminal welcome and exit visuals are compact and readable in narrow SSH
+  and phone-terminal windows, with a shorter task-focused setup explanation.
+- The profile renderer is covered by a five-profile test: every person or
+  device receives an independent certificate and private key, while passwords
+  never enter `.ovpn` files.
+
 ## [2.2.1] - 2026-11-15
 
 ### Fixed
@@ -78,6 +95,8 @@ All notable changes to this project are documented here.
 
 [2.1.0]: https://github.com/jackh0006/OpenVPN-Wizard/compare/v2.0.0...v2.1.0
 [2.2.0]: https://github.com/jackh0006/OpenVPN-Wizard/compare/v2.1.0...v2.2.0
+[2.2.1]: https://github.com/jackh0006/OpenVPN-Wizard/compare/v2.2.0...v2.2.1
+[2.2.2]: https://github.com/jackh0006/OpenVPN-Wizard/compare/v2.2.1...v2.2.2
 
 ## [2.0.0] - 2026-11-13
 

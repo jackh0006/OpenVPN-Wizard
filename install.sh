@@ -68,8 +68,14 @@ ok "Installed: $(command -v vpn-installer)"
 # and is already exhausted by the time the Rich wizard starts. Reattach the
 # user's terminal so the interactive menu can receive answers. This does not
 # affect --non-interactive automation.
-if [[ ! -t 0 && -r /dev/tty ]]; then
-    exec </dev/tty
+if [[ ! -t 0 ]]; then
+    if exec 3</dev/tty 2>/dev/null; then
+        exec <&3
+    else
+        warn "The wizard was installed, but this session has no interactive terminal."
+        warn "Connect with a terminal, then run: vpn-installer install"
+        exit 0
+    fi
 fi
 
 case "${1:-}" in
