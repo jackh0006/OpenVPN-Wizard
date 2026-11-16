@@ -864,8 +864,17 @@ def uninstall(
             border_style="warning",
         )
     )
-    if not yes and not typer.confirm("Continue?"):
-        raise typer.Exit(0)
+    if not yes:
+        if purge:
+            confirmation = typer.prompt(
+                "Type REMOVE to permanently delete only OpenVPN Wizard data"
+            )
+            if confirmation.strip() != "REMOVE":
+                console.print("[dim]Nothing was removed.[/dim]")
+                raise typer.Exit(0)
+        elif not typer.confirm("Detach the VPN now?", default=False):
+            console.print("[dim]Nothing was removed.[/dim]")
+            raise typer.Exit(0)
 
     _guard(_do_uninstall(config, purge))
 

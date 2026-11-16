@@ -258,6 +258,10 @@ sudo vpn-installer download    # list profiles / show download options
 sudo vpn-installer uninstall   # detach safely (keeps keys unless --purge)
 ```
 
+Use `sudo vpn-installer uninstall --purge` for a full removal of Wizard-owned
+VPN data. It requires typing `REMOVE` and removes only the marked HAProxy
+entries created by OpenVPN Wizard.
+
 Management actions:
 
 | Action | Effect |

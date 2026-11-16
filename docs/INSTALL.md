@@ -102,4 +102,7 @@ sudo vpn-installer uninstall          # stop + detach, keep keys/profiles
 sudo vpn-installer uninstall --purge  # also delete installer-owned keys/data
 ```
 
+`--purge` requires typing `REMOVE`. It removes only OpenVPN Wizard's marked
+HAProxy additions and its own VPN files, never unrelated HAProxy services.
+
 Packages and unrelated HAProxy/iptables rules are left alone.
