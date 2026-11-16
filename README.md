@@ -8,7 +8,7 @@ and how many users — then builds one unique `.ovpn` per user and applies only
 the changes it owns.
 
 [![CI](https://github.com/jackh0006/OpenVPN-Wizard/actions/workflows/ci.yml/badge.svg)](https://github.com/jackh0006/OpenVPN-Wizard/actions/workflows/ci.yml)
-**New to VPNs?** Start with the plain-English [Beginner Guide](docs/BEGINNER-GUIDE.md). It explains every question and every command without assuming prior knowledge.
+**Start here:** [Simple setup and daily-use guide](docs/BEGINNER-GUIDE.md) — install, create profiles, download them, check status, read logs, and remove the VPN safely.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)

@@ -132,6 +132,35 @@ sudo vpn-installer manage
 - **Rotate keys** is for a lost or leaked profile.
 - **Download command** prints the exact `scp` line.
 
+## Daily control center
+
+Start here whenever you want to change something:
+
+```bash
+sudo vpn-installer manage
+```
+
+| You want to… | Choose |
+|---|---|
+| make a new `.ovpn` file | Add user |
+| stop one old phone or computer | Revoke/remove user |
+| give someone a new password | Change password |
+| change the file name shown in the VPN app | Rename profile |
+| replace a lost key | Rotate certificate + key |
+| copy a profile to a device | Regenerate/export profile or Show download command |
+| see every profile | Detailed list |
+
+For a quick health check and recent service messages:
+
+```bash
+sudo vpn-installer validate
+sudo vpn-installer doctor
+journalctl -u openvpn@server -n 50 --no-pager
+```
+
+The installer only manages its own OpenVPN listener and marked HAProxy entries.
+It does not free, stop, or edit ports used by other services.
+
 ## 9. If something goes wrong
 
 ```bash
