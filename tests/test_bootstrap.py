@@ -9,14 +9,13 @@ def test_bootstrap_refreshes_an_existing_install():
     assert 'install --quiet --upgrade --force-reinstall "$SRC_DIR"' in content
 
 
-def test_interactive_bootstrap_reattaches_all_terminal_streams():
+def test_piped_interactive_bootstrap_prints_the_reliable_next_step():
     content = BOOTSTRAP.read_text()
-    assert "reattach_terminal()" in content
-    assert "exec <&3 >&3 2>&3" in content
-    assert 'log "Launching the setup wizard..."' in content
+    assert 'ok "Bootstrap complete. Start the guided setup with: sudo vpn-installer install"' in content
+    assert "! -t 0" in content
 
 
 def test_noninteractive_bootstrap_does_not_require_a_terminal():
     content = BOOTSTRAP.read_text()
     assert "--non-interactive|-n|--plan" in content
-    assert 'if [[ "$needs_terminal" == true && (! -t 0 || ! -t 1 || ! -t 2) ]]; then' in content
+    assert 'if [[ "$needs_terminal" == true && ! -t 0 ]]; then' in content

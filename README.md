@@ -20,11 +20,11 @@ the changes it owns.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jackh0006/OpenVPN-Wizard/main/install.sh | sudo bash
+sudo vpn-installer install
 ```
 
-The setup wizard opens after installation. If you intentionally run the
-command without an interactive terminal, installation completes safely; start
-the wizard later with `sudo vpn-installer install`.
+The first command installs or updates the wizard. The second command starts the
+guided setup in your terminal; this two-step quick start is reliable over SSH.
 
 or from a clone:
 
