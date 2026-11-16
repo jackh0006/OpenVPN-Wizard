@@ -67,16 +67,6 @@ python3 -m venv "$VENV_DIR"
 ln -sf "$VENV_DIR/bin/vpn-installer" /usr/local/bin/vpn-installer
 ok "Installed: $(command -v vpn-installer)"
 
-# A curl-piped script consumes stdin. Reconnect all standard streams to the
-# controlling terminal before starting Rich, otherwise the wizard can receive
-# EOF immediately or render nowhere. This leaves explicit non-interactive
-# calls untouched because they do not need a terminal.
-reattach_terminal() {
-    [[ -r /dev/tty && -w /dev/tty ]] || return 1
-    exec 3<>/dev/tty || return 1
-    exec <&3 >&3 2>&3
-}
-
 needs_terminal=true
 for arg in "$@"; do
     case "$arg" in
@@ -87,12 +77,12 @@ for arg in "$@"; do
     esac
 done
 
-if [[ "$needs_terminal" == true && (! -t 0 || ! -t 1 || ! -t 2) ]]; then
-    if ! reattach_terminal; then
-        warn "The wizard was installed, but this session has no interactive terminal."
-        warn "Connect with a terminal, then run: sudo vpn-installer install"
-        exit 0
-    fi
+if [[ "$needs_terminal" == true && ! -t 0 ]]; then
+    # A script received through a pipe cannot reliably take over the caller's
+    # terminal on every SSH/sudo combination. Finish the safe bootstrap, then
+    # give one explicit command that always starts the interactive wizard.
+    ok "Bootstrap complete. Start the guided setup with: sudo vpn-installer install"
+    exit 0
 fi
 
 log "Launching the setup wizard..."

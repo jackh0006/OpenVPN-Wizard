@@ -23,15 +23,14 @@ Copy and paste this into the server:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jackh0006/OpenVPN-Wizard/main/install.sh | sudo bash
+sudo vpn-installer install
 ```
 
-The questions appear after the download finishes. If you are using a session
-without an interactive terminal, reconnect normally and run `sudo
-vpn-installer install` to begin.
+The first line installs or updates the wizard. The second line opens the
+questions in your terminal. Use both lines when connecting through SSH.
 
-The script installs the tool and starts a question-and-answer wizard. It does
-not change anything until you reach the confirmation screen. Press `Ctrl+C` at
-any time before that and nothing happens.
+The wizard does not change anything until you reach the confirmation screen.
+Press `Ctrl+C` at any time before that and nothing happens.
 
 You can also try it without changing anything:
 
