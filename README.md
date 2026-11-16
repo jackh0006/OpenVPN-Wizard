@@ -49,6 +49,51 @@ deploying.
 
 ---
 
+## Daily controls
+
+Everything you normally need is available from one place:
+
+```bash
+sudo vpn-installer manage
+```
+
+| What you want | Menu choice | What changes |
+|---|---|---|
+| Make a new `.ovpn` file | Add user | Only the new profile, certificate, and account |
+| Stop one old device | Revoke/remove user | Only that certificate and profile |
+| Give a person a new password | Change password | Only that account's password |
+| Change the name shown in the VPN app | Rename profile | Only that `.ovpn` filename/display name |
+| Replace a lost profile | Rotate certificate + key | Only that person's old key is revoked |
+| Copy a profile to a phone or computer | Regenerate/export or Show download command | A fresh copy of that profile |
+| See every profile | Detailed list | Nothing; read-only |
+
+### Check status and read logs
+
+```bash
+sudo vpn-installer validate                 # checks the running VPN
+sudo vpn-installer doctor                   # explains common problems
+journalctl -u openvpn@server -n 50 --no-pager  # recent OpenVPN messages
+```
+
+The installer only manages its own OpenVPN listener and clearly marked
+HAProxy entries. It does not stop, free, or edit ports used by another service.
+
+### Remove the VPN safely
+
+```bash
+sudo vpn-installer uninstall          # stop and detach; keep keys/profiles
+sudo vpn-installer uninstall --purge  # permanently remove Wizard-owned VPN data
+```
+
+Full removal asks you to type `REMOVE`. It deletes only OpenVPN Wizard's own
+files, firewall rules, and marked HAProxy entries; unrelated services stay in
+place.
+
+For a longer walkthrough with downloading and importing profiles, see the
+[full setup guide](docs/BEGINNER-GUIDE.md).
+
+---
+
 ## What the wizard asks
 
 | Question | Choices | Notes |
