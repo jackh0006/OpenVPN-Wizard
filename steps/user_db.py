@@ -111,24 +111,38 @@ class UserDBStep(BaseStep):
         conn = sqlite3.connect(str(db_path))
         try:
             cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO users
-                    (name, username, password_hash, cert_name, cert_serial,
-                     auth_mode, access_mode, profile_path, revoked)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
-                ON CONFLICT(name) DO UPDATE SET
-                    username=excluded.username,
-                    password_hash=excluded.password_hash,
-                    cert_name=excluded.cert_name,
-                    cert_serial=excluded.cert_serial,
-                    auth_mode=excluded.auth_mode,
-                    access_mode=excluded.access_mode,
-                    profile_path=excluded.profile_path,
-                    revoked=0
-            """, (
+            # A rerun can keep the same username while changing the profile
+            # filename/display name. SQLite's ON CONFLICT(name) alone then
+            # fails on users.username. Resolve either identity to one row and
+            # update it atomically; never silently merge two separate rows.
+            cur.execute("BEGIN IMMEDIATE")
+            matches = cur.execute(
+                "SELECT id FROM users WHERE name = ? OR username = ?",
+                (user.name, user.username),
+            ).fetchall()
+            ids = {row[0] for row in matches}
+            values = (
                 user.name, user.username, password_hash, user.safe_cert_name,
                 serial, config.auth_mode, config.access_mode, profile,
-            ))
+            )
+            if len(ids) > 1:
+                raise sqlite3.IntegrityError(
+                    f"Profile name '{user.name}' and username '{user.username}' belong to different users"
+                )
+            if ids:
+                cur.execute("""
+                    UPDATE users SET
+                        name=?, username=?, password_hash=?, cert_name=?, cert_serial=?,
+                        auth_mode=?, access_mode=?, profile_path=?, revoked=0
+                    WHERE id=?
+                """, (*values, ids.pop()))
+            else:
+                cur.execute("""
+                    INSERT INTO users
+                        (name, username, password_hash, cert_name, cert_serial,
+                         auth_mode, access_mode, profile_path, revoked)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                """, values)
             conn.commit()
         finally:
             conn.close()

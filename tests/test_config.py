@@ -13,6 +13,7 @@ from core.config import (
     validate_username,
 )
 from core.secrets import generate_password, hash_password, verify_password
+from steps.user_db import UserDBStep
 
 
 def test_ip_and_hostname_validation():
@@ -113,3 +114,21 @@ def test_users_cannot_share_certificate_names():
         ]
     )
     assert any("same certificate name" in p for p in validate_config(config))
+
+
+def test_user_database_reuses_username_when_a_profile_is_renamed(tmp_path):
+    config = _config(user_db=str(tmp_path / "users.db"), profiles_dir=str(tmp_path / "clients"))
+    step = UserDBStep()
+    db_path = tmp_path / "users.db"
+    step._init_db(db_path)
+    step._upsert(db_path, config, ClientSpec("Old-profile", "mhh06", "old-password"), "old")
+    step._upsert(db_path, config, ClientSpec("MHH-01", "mhh06", "new-password"), "new")
+
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+        assert conn.execute("SELECT name FROM users WHERE username='mhh06'").fetchone()[0] == "MHH-01"
+    finally:
+        conn.close()
