@@ -1,4 +1,4 @@
-# OpenVPN Wizard v2.2
+# OpenVPN Wizard
 
 Hardened, **non-destructive** OpenVPN deployment for Ubuntu/Debian VPS.
 
