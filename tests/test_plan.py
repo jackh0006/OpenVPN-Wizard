@@ -48,12 +48,12 @@ def test_plan_renders_valid_tcp_profiles(tmp_path):
 
     for path in result["profiles"]:
         content = open(path).read()
-        assert "proto tcp-client" in content
-        assert "tun-mtu 1400" in content
+        assert "proto tcp" in content
+        assert "tun-mtu 1400" not in content
         assert "mssfix 1360" in content
         assert "sndbuf 524288" in content
         assert "remote vpn.example.com 443" in content
-        assert "verify-x509-name server name" in content
+        assert "tls-client" in content
         assert "auth-user-pass" in content
         assert content.count("<tls-crypt>") == 1
         assert "-----BEGIN CERTIFICATE-----" in content
@@ -130,3 +130,30 @@ def test_every_user_gets_a_different_key_and_certificate(tmp_path):
         certs.add(cert)
     assert len(keys) == len(result["profiles"])
     assert len(certs) == len(result["profiles"])
+
+
+def test_reference_tcp_profile_layout_and_five_independent_users(tmp_path):
+    """The default profile stays compatible with the supplied working layout."""
+    users = [
+        ClientSpec(f"MHH06-{number:02d}", f"mhh06{number:02d}", f"Password-{number}")
+        for number in range(1, 6)
+    ]
+    result = build_plan(_config(users=users), tmp_path / "plan")
+    assert result["problems"] == []
+    profiles = [open(path).read() for path in result["profiles"]]
+
+    expected_directives = [
+        "client", "dev tun", "proto tcp", "remote vpn.example.com 443", "nobind",
+        "auth-user-pass", "cipher AES-256-GCM", "auth SHA384",
+        "data-ciphers AES-256-GCM:CHACHA20-POLY1305:AES-128-GCM",
+        "tls-version-min 1.3", "tls-version-max 1.3", "remote-cert-tls server",
+        "tls-client", "tls-ciphersuites TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256",
+        "sndbuf 524288", "rcvbuf 524288", "tcp-nodelay", "explicit-exit-notify 0",
+        "reneg-sec 3600", "mssfix 1360", "verb 3",
+    ]
+    for content, user in zip(profiles, users):
+        positions = [content.index(directive) for directive in expected_directives]
+        assert positions == sorted(positions)
+        assert content.index("<tls-crypt>") < content.index("<ca>") < content.index("<cert>") < content.index("<key>")
+        assert user.password not in content
+    assert len({content.split("<key>", 1)[1].split("</key>", 1)[0] for content in profiles}) == 5

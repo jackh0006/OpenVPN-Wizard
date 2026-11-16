@@ -1,31 +1,22 @@
-# OpenVPN Wizard v2.1 - client profile
-# Profile: {{ profile_name }}
-# Endpoint: {{ config.remote_host }}:{{ config.public_port }}/{{ config.vpn_proto }}
-# Authentication: {{ "certificate + username/password" if config.auth_mode == "userpass" else "certificate only" }}
-# Access: {{ "full tunnel (all traffic through VPN)" if config.access_mode == "free" else "locked (VPN network only)" }}
-# Generated: {{ generated_at }}
-#
-# Import this single file into OpenVPN Connect (Android/iOS), OpenVPN GUI
-# (Windows), Tunnelblick (macOS) or the openvpn command line client.
-
 client
 dev tun
-proto {{ "tcp-client" if config.vpn_proto == "tcp" else "udp" }}
+proto {{ config.vpn_proto }}
 remote {{ config.remote_host }} {{ config.public_port }}
-resolv-retry infinite
 nobind
-persist-key
-persist-tun
-remote-cert-tls server
-verify-x509-name {{ config.server_cert_cn }} name
+{% if config.auth_mode == "userpass" %}
+auth-user-pass
+{% endif %}
+
+# Maximum security crypto (matches server TLS 1.3 only)
 cipher {{ config.cipher }}
-data-ciphers {{ config.data_ciphers }}
-data-ciphers-fallback {{ config.cipher }}
 auth {{ config.auth_digest }}
+data-ciphers {{ config.data_ciphers }}
 tls-version-min {{ config.tls_min }}
 {% if config.tls_max %}tls-version-max {{ config.tls_max }}
-{% endif %}tls-ciphersuites {{ config.tls_ciphersuites }}
-tls-cipher {{ config.tls_cipher }}
+{% endif %}remote-cert-tls server
+tls-client
+tls-ciphersuites {{ config.tls_ciphersuites }}
+
 {% if config.access_mode == "locked" %}
 # Locked profile: never accept server routes or DNS, only reach the VPN subnet.
 route-nopull
@@ -33,22 +24,25 @@ route {{ config.vpn_subnet }} {{ config.vpn_netmask }}
 pull-filter ignore "redirect-gateway"
 pull-filter ignore "dhcp-option"
 {% endif %}
-{% if config.auth_mode == "userpass" %}
-auth-user-pass
-{% endif %}
+# TCP optimizations for large transfers
+sndbuf {{ config.sndbuf }}
+rcvbuf {{ config.rcvbuf }}
+
+# Stealth / DPI resistance - look like normal HTTPS
 {% if config.vpn_proto == "tcp" %}
 tcp-nodelay
 explicit-exit-notify 0
 {% else %}
 explicit-exit-notify 2
 {% endif %}
-tun-mtu {{ config.tun_mtu }}
-mssfix {{ config.mssfix }}
-sndbuf {{ config.sndbuf }}
-rcvbuf {{ config.rcvbuf }}
 reneg-sec 3600
+mssfix {{ config.mssfix }}
 verb 3
-mute 20
+
+# TLS-Crypt v1 (matches server)
+<tls-crypt>
+{{ ta_key }}
+</tls-crypt>
 
 <ca>
 {{ ca_crt }}
@@ -61,7 +55,3 @@ mute 20
 <key>
 {{ client_key }}
 </key>
-
-<tls-crypt>
-{{ ta_key }}
-</tls-crypt>
