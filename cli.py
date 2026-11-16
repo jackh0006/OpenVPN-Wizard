@@ -9,7 +9,10 @@ MIT licensed. No telemetry, no tracking.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 from typing import List, Optional
 
@@ -772,6 +775,7 @@ def download(
     host: str = typer.Option("", "--host", help="Hostname/IP to print in the one-time URL."),
     print_profile: bool = typer.Option(False, "--print", help="Print the profile to stdout."),
     scp: bool = typer.Option(False, "--scp", help="Print the scp command."),
+    all_profiles: bool = typer.Option(False, "--all", help="Deliver every active profile as one ZIP."),
 ):
     """List or deliver a client profile securely."""
     state = StateManager().load()
@@ -779,6 +783,38 @@ def download(
         console.print("[red]No installation found.[/red]")
         raise typer.Exit(1)
     config = _config_with_db_users(state.config)
+    if all_profiles:
+        users = [user for user in config.users if (Path(config.profiles_dir) / f"{user.name}.ovpn").is_file()]
+        if not users:
+            console.print("[red]No profile files found.[/red]")
+            raise typer.Exit(1)
+        remote = f"root@{config.remote_host}:{config.profiles_dir}/*.ovpn"
+        if scp:
+            console.print(f"scp {remote} ~/Downloads/")
+            return
+        if serve:
+            fd, archive_name = tempfile.mkstemp(prefix="openvpn-profiles-", suffix=".zip")
+            os.close(fd)
+            archive = Path(archive_name)
+            try:
+                with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+                    for user in users:
+                        path = Path(config.profiles_dir) / f"{user.name}.ovpn"
+                        bundle.write(path, arcname=path.name)
+                archive.chmod(0o600)
+                serve_once(archive, port=port, ttl=ttl, public_host=host or config.remote_host)
+            finally:
+                archive.unlink(missing_ok=True)
+            return
+        console.print(Panel(
+            f"[bold]All profiles:[/bold] {len(users)} file(s)\n\n"
+            f"[bold]Linux / macOS / WSL:[/bold]\n  [code]scp {remote} ~/Downloads/[/code]\n\n"
+            f"[bold]Windows PowerShell:[/bold]\n  [code]scp {remote} $env:USERPROFILE\\Downloads\\[/code]\n\n"
+            "[bold]One-time ZIP link for a phone:[/bold]\n"
+            "  [code]sudo vpn-installer download --all --serve[/code]",
+            title="[primary]Download all profiles[/primary]", border_style="primary",
+        ))
+        return
     if not profile:
         for user in config.users:
             console.print(f"  {user.name}  ({user.username})")
