@@ -21,6 +21,10 @@ default.
 curl -fsSL https://raw.githubusercontent.com/jackh0006/OpenVPN-Wizard/main/install.sh | sudo bash
 ```
 
+The setup wizard starts when the bootstrap finishes. If the command is run
+without an interactive terminal, it installs the wizard and prints the command
+to start it later: `sudo vpn-installer install`.
+
 The bootstrap installs Python, clones the source to `/opt/openvpn-wizard-src`,
 creates `/opt/vpn-installer`, and starts the interactive wizard.
 

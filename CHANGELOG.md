@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## [2.2.3] - 2026-11-16
+
+### Fixed
+- The one-line bootstrap now reconnects standard input, output, and error to
+  the controlling terminal before opening the interactive wizard. It prints a
+  clear launch message and a reliable fallback command when no terminal exists.
+- Updating an existing source checkout now force-reinstalls the local package,
+  preventing an old same-version package from being reused.
+- Explicit non-interactive and plan commands no longer try to acquire a TTY.
+
 ## [2.2.2] - 2026-11-16
 
 ### Fixed
@@ -97,6 +107,7 @@ All notable changes to this project are documented here.
 [2.2.0]: https://github.com/jackh0006/OpenVPN-Wizard/compare/v2.1.0...v2.2.0
 [2.2.1]: https://github.com/jackh0006/OpenVPN-Wizard/compare/v2.2.0...v2.2.1
 [2.2.2]: https://github.com/jackh0006/OpenVPN-Wizard/compare/v2.2.1...v2.2.2
+[2.2.3]: https://github.com/jackh0006/OpenVPN-Wizard/compare/v2.2.2...v2.2.3
 
 ## [2.0.0] - 2026-11-13
 

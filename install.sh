@@ -59,24 +59,43 @@ fi
 log "Preparing Python virtual environment..."
 python3 -m venv "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --quiet --upgrade pip
-"$VENV_DIR/bin/pip" install --quiet "$SRC_DIR"
+# The source checkout can advance without a version change during development.
+# Force the installed package to match the checkout instead of reusing stale
+# files from an existing virtual environment.
+"$VENV_DIR/bin/pip" install --quiet --upgrade --force-reinstall "$SRC_DIR"
 
 ln -sf "$VENV_DIR/bin/vpn-installer" /usr/local/bin/vpn-installer
 ok "Installed: $(command -v vpn-installer)"
 
-# When launched with `curl ... | sudo bash`, stdin is the downloaded script
-# and is already exhausted by the time the Rich wizard starts. Reattach the
-# user's terminal so the interactive menu can receive answers. This does not
-# affect --non-interactive automation.
-if [[ ! -t 0 ]]; then
-    if exec 3</dev/tty 2>/dev/null; then
-        exec <&3
-    else
+# A curl-piped script consumes stdin. Reconnect all standard streams to the
+# controlling terminal before starting Rich, otherwise the wizard can receive
+# EOF immediately or render nowhere. This leaves explicit non-interactive
+# calls untouched because they do not need a terminal.
+reattach_terminal() {
+    [[ -r /dev/tty && -w /dev/tty ]] || return 1
+    exec 3<>/dev/tty || return 1
+    exec <&3 >&3 2>&3
+}
+
+needs_terminal=true
+for arg in "$@"; do
+    case "$arg" in
+        --non-interactive|-n|--plan)
+            needs_terminal=false
+            break
+            ;;
+    esac
+done
+
+if [[ "$needs_terminal" == true && (! -t 0 || ! -t 1 || ! -t 2) ]]; then
+    if ! reattach_terminal; then
         warn "The wizard was installed, but this session has no interactive terminal."
-        warn "Connect with a terminal, then run: vpn-installer install"
+        warn "Connect with a terminal, then run: sudo vpn-installer install"
         exit 0
     fi
 fi
+
+log "Launching the setup wizard..."
 
 case "${1:-}" in
     --uninstall)

@@ -58,7 +58,7 @@ from ui.screens.welcome import WelcomeScreen
 from utils.download import serve_once
 from validation.checklist import run_validation
 
-VERSION = "2.2.2"
+VERSION = "2.2.3"
 
 app = typer.Typer(
     name="vpn-installer",
